@@ -26,13 +26,23 @@ public class OSMImportToolTest {
         try (FileSystemAbstraction fs = new DefaultFileSystemAbstraction()) {
             new OSMImportTool("samples/map.osm", storeDir.getCanonicalPath()).run(fs);
         }
+        GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
         long expectedOSMNodes = 2334;
         long nodesWithTags = 202;
         long expectedOSMWays = 167;
-        GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
+        long nonWayNodes = countResult(db, "MATCH (n:OSMNode) WHERE NOT exists((n)<--(:OSMWayNode)) RETURN count(n) AS count");
+        for (String label : new String[]{"OSMNode", "OSMWay", "OSMWayNode", "OSMTags"}) {
+            System.out.println("Have nodes with label '" + label + "':" + countNodesWithLabel(db, label));
+        }
+        for (String type : new String[]{"TAGS", "FIRST_NODE", "NEXT", "NODE"}) {
+            System.out.println("Have relationships of type '" + type + "':" + countRelationshipsWithType(db, type));
+        }
+        System.out.println("Have unattached nodes:" + nonWayNodes);
+
         map(
                 "OSMNode", expectedOSMNodes,
                 "OSMWay", expectedOSMWays,
+                "OSMWayNode", expectedOSMNodes - nonWayNodes,
                 "OSMTags", expectedOSMWays + nodesWithTags
         ).forEach(
                 (label, count) -> assertThat("Expected specific number of '" + label + "' nodes", countNodesWithLabel(db, label), equalTo(count))

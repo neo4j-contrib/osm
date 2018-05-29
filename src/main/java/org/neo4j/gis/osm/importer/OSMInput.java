@@ -5,10 +5,7 @@ import java.nio.charset.Charset;
 import java.text.DateFormat;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.function.ToIntFunction;
 
 import org.neo4j.io.fs.FileSystemAbstraction;
@@ -29,6 +26,7 @@ public class OSMInput implements Input {
     private final Groups groups = new Groups();
     private final Group nodesGroup;
     private final Group waysGroup;
+    private final Group wayNodesGroup;
     private final Group tagsGroup;
     private final Collector badCollector;
     private final FileSystemAbstraction fs;
@@ -39,6 +37,7 @@ public class OSMInput implements Input {
         this.badCollector = badCollector;
         nodesGroup = this.groups.getOrCreate("osm_nodes");
         waysGroup = this.groups.getOrCreate("osm_ways");
+        wayNodesGroup = this.groups.getOrCreate("osm_way_nodes");
         tagsGroup = this.groups.getOrCreate("osm_tags");
     }
 
@@ -52,11 +51,12 @@ public class OSMInput implements Input {
         }
     }
 
-    private class NodeEvent {
+    private static class NodeEvent {
         String label;
         String osmId;
         Group group;
         Map<String, Object> properties;
+        private static final Map<String, Object> EMPTY_PROPERTIES = new HashMap<>();
 
         private NodeEvent(String label, String osmId, Group group, Map<String, Object> properties) {
             this.label = label;
@@ -64,11 +64,25 @@ public class OSMInput implements Input {
             this.group = group;
             this.properties = properties;
         }
+
+        private NodeEvent(String label, String osmId, Group group) {
+            this(label, osmId, group, EMPTY_PROPERTIES);
+        }
     }
 
     private class OSMNode extends NodeEvent {
         private OSMNode(long id, Map<String, Object> properties) {
             super("OSMNode", "n" + id, nodesGroup, properties);
+        }
+
+        private OSMNode(long id) {
+            super("OSMNode", "n" + id, nodesGroup);
+        }
+    }
+
+    private class OSMWayNode extends NodeEvent {
+        private OSMWayNode(long id) {
+            super("OSMWayNode", "wn" + id, wayNodesGroup);
         }
     }
 
@@ -87,7 +101,7 @@ public class OSMInput implements Input {
     interface OSMInputChunk extends InputChunk {
         void addOSMNode(long id, Map<String, Object> properties);
 
-        void addOSMWay(long id, Map<String, Object> properties);
+        void addOSMWay(long id, Map<String, Object> properties, ArrayList<Long> wayNodes);
 
         void addOSMTags(Map<String, Object> properties);
 
@@ -97,41 +111,45 @@ public class OSMInput implements Input {
     }
 
     class OSMNodesInputChunk implements OSMInputChunk {
-        NodeEvent[] data = new NodeEvent[CHUNK_SIZE];
-        int eventsAdded = 0;
+        ArrayList<NodeEvent> data = new ArrayList<>(CHUNK_SIZE);
+        NodeEvent previousTaggableNodeEvent = null;
         int currentRead = -1;
 
         private void addEvent(NodeEvent event) {
-            data[eventsAdded] = event;
-            eventsAdded++;
+            data.add(event);
         }
 
         @Override
         public void addOSMNode(long id, Map<String, Object> properties) {
-            addEvent(new OSMNode(id, properties));
+            previousTaggableNodeEvent = new OSMNode(id, properties);
+            addEvent(previousTaggableNodeEvent);
         }
 
         @Override
-        public void addOSMWay(long id, Map<String, Object> properties) {
-            addEvent(new OSMWay(id, properties));
+        public void addOSMWay(long id, Map<String, Object> properties, ArrayList<Long> wayNodes) {
+            previousTaggableNodeEvent = new OSMWay(id, properties);
+            addEvent(previousTaggableNodeEvent);
+            for (long osm_id : wayNodes) {
+                addEvent(new OSMWayNode(osm_id));
+            }
         }
 
         @Override
         public void addOSMTags(Map<String, Object> properties) {
-            addEvent(new OSMTags(data[eventsAdded - 1].osmId, properties));
+            addEvent(new OSMTags(previousTaggableNodeEvent.osmId, properties));
         }
 
         @Override
         public long size() {
-            return eventsAdded;
+            return data.size();
         }
 
         @Override
         public boolean next(InputEntityVisitor visitor) throws IOException {
             currentRead++;
-            if (data != null && currentRead < eventsAdded) {
+            if (data != null && currentRead < data.size()) {
                 // Make OSM node
-                NodeEvent event = data[currentRead];
+                NodeEvent event = data.get(currentRead);
                 visitor.id(event.osmId, event.group);
                 visitor.labels(new String[]{event.label});
                 event.properties.forEach(visitor::property);
@@ -143,14 +161,13 @@ public class OSMInput implements Input {
 
         @Override
         public void reset() {
-            this.eventsAdded = 0;
+            this.data.clear();
             this.currentRead = -1;
         }
 
         @Override
         public void close() {
             reset();
-            this.data = null;
         }
     }
 
@@ -161,61 +178,96 @@ public class OSMInput implements Input {
         Group fromGroup;
         Group toGroup;
 
-        private RelationshipEvent(String type, String fromId, Group fromGroup, String toId, Group toGroup) {
+        private RelationshipEvent(String type, NodeEvent from, NodeEvent to) {
             this.type = type;
-            this.fromId = fromId;
-            this.toId = toId;
-            this.fromGroup = fromGroup;
-            this.toGroup = toGroup;
+            this.fromId = from.osmId;
+            this.toId = to.osmId;
+            this.fromGroup = from.group;
+            this.toGroup = to.group;
         }
     }
 
     private class OSMTagsRel extends RelationshipEvent {
-        private OSMTagsRel(NodeEvent from, NodeEvent to) {
-            super("TAGS", from.osmId, from.group, to.osmId, to.group);
+        private OSMTagsRel(NodeEvent from, OSMTags to) {
+            super("TAGS", from, to);
+        }
+    }
+
+    private class OSMWayNodeRel extends RelationshipEvent {
+        private OSMWayNodeRel(OSMWayNode from, OSMNode to) {
+            super("NODE", from, to);
+        }
+    }
+
+    private class OSMNextWayNodeRel extends RelationshipEvent {
+        private OSMNextWayNodeRel(OSMWayNode from, OSMWayNode to) {
+            super("NEXT", from, to);
+        }
+    }
+
+    private class OSMFirstWayNodeRel extends RelationshipEvent {
+        private OSMFirstWayNodeRel(OSMWay from, OSMWayNode to) {
+            super("FIRST_NODE", from, to);
         }
     }
 
     class OSMRelationshipsInputChunk implements OSMInputChunk {
-        RelationshipEvent[] data = new RelationshipEvent[CHUNK_SIZE];
-        NodeEvent previousNodeEvent = null;
-        int eventsAdded = 0;
+        ArrayList<RelationshipEvent> data = new ArrayList<>(CHUNK_SIZE);
+        NodeEvent previousTaggableNodeEvent = null;
         int currentRead = -1;
 
         private void addEvent(RelationshipEvent event) {
-            data[eventsAdded] = event;
-            eventsAdded++;
+            data.add(event);
         }
 
         @Override
         public void addOSMNode(long id, Map<String, Object> properties) {
-            previousNodeEvent = new OSMNode(id, properties);
+            previousTaggableNodeEvent = new OSMNode(id, properties);
         }
 
         @Override
-        public void addOSMWay(long id, Map<String, Object> properties) {
-            previousNodeEvent = new OSMWay(id, properties);
+        public void addOSMWay(long id, Map<String, Object> properties, ArrayList<Long> wayNodes) {
+            OSMWay osmWay = new OSMWay(id, properties);
+            OSMWayNode firstWayNode = null;
+            OSMWayNode previousWayNode = null;
+            for (long osm_id : wayNodes) {
+                OSMNode osmNode = new OSMNode(osm_id);
+                OSMWayNode wayNode = new OSMWayNode(osm_id);
+                // Link the way to the first proxy node
+                if (firstWayNode == null) {
+                    firstWayNode = wayNode;
+                    addEvent(new OSMFirstWayNodeRel(osmWay, wayNode));
+                }
+                // link each proxy node to the actual point node
+                addEvent(new OSMWayNodeRel(wayNode, osmNode));
+                if (previousWayNode != null) {
+                    // link each proxy node to the next proxy node
+                    addEvent(new OSMNextWayNodeRel(previousWayNode, wayNode));
+                }
+                previousWayNode = wayNode;
+            }
+            previousTaggableNodeEvent = osmWay;
         }
 
         @Override
         public void addOSMTags(Map<String, Object> properties) {
-            NodeEvent tagNode = new OSMTags(previousNodeEvent.osmId, properties);
-            OSMTagsRel tagsRel = new OSMTagsRel(previousNodeEvent, tagNode);
+            OSMTags tagNode = new OSMTags(previousTaggableNodeEvent.osmId, properties);
+            OSMTagsRel tagsRel = new OSMTagsRel(previousTaggableNodeEvent, tagNode);
             System.out.println("Creating relationship: (" + tagsRel.fromId + ")-[" + tagsRel.type + "]->(" + tagsRel.toId + ")");
             addEvent(tagsRel);
         }
 
         @Override
         public long size() {
-            return eventsAdded;
+            return data.size();
         }
 
         @Override
         public boolean next(InputEntityVisitor visitor) throws IOException {
             currentRead++;
-            if (data != null && currentRead < eventsAdded) {
+            if (data != null && currentRead < data.size()) {
                 // Make relationship between two nodes, with nodeId mapped using groups
-˚                RelationshipEvent event = data[currentRead];
+                RelationshipEvent event = data.get(currentRead);
                 visitor.startId(event.fromId, event.fromGroup);
                 visitor.endId(event.toId, event.toGroup);
                 visitor.type(event.type);
@@ -227,14 +279,13 @@ public class OSMInput implements Input {
 
         @Override
         public void reset() {
-            this.eventsAdded = 0;
+            this.data.clear();
             this.currentRead = -1;
         }
 
         @Override
         public void close() {
             reset();
-            this.data = null;
         }
     }
 
@@ -261,9 +312,6 @@ public class OSMInput implements Input {
             OSMInputChunk events = (OSMInputChunk) chunk;
             events.reset();
             while (events.size() < CHUNK_SIZE) {
-                if (currentXMLTags.size() > 0 && !currentXMLTags.get(0).equals("osm")) {
-                    System.out.println("Whaaaat!");
-                }
                 try {
                     if (parser.hasNext()) {
                         int event = parser.next();
@@ -317,7 +365,7 @@ public class OSMInput implements Input {
                                         }
                                     } else if (currentXMLTags.get(1).equals("way")) {
                                         long osm_id = Long.parseLong(wayProperties.get("way_osm_id").toString());
-                                        events.addOSMWay(osm_id, wayProperties);
+                                        events.addOSMWay(osm_id, wayProperties, wayNodes);
                                         if (currentNodeTags.size() > 0) {
                                             events.addOSMTags(currentNodeTags);
                                             currentNodeTags = new LinkedHashMap<>();
