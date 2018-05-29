@@ -84,7 +84,19 @@ public class OSMInput implements Input {
         }
     }
 
-    class OSMNodesInputChunk implements InputChunk {
+    interface OSMInputChunk extends InputChunk {
+        void addOSMNode(long id, Map<String, Object> properties);
+
+        void addOSMWay(long id, Map<String, Object> properties);
+
+        void addOSMTags(Map<String, Object> properties);
+
+        long size();
+
+        void reset();
+    }
+
+    class OSMNodesInputChunk implements OSMInputChunk {
         NodeEvent[] data = new NodeEvent[CHUNK_SIZE];
         int eventsAdded = 0;
         int currentRead = -1;
@@ -94,19 +106,23 @@ public class OSMInput implements Input {
             eventsAdded++;
         }
 
-        private void addOSMNode(long id, Map<String, Object> properties) {
+        @Override
+        public void addOSMNode(long id, Map<String, Object> properties) {
             addEvent(new OSMNode(id, properties));
         }
 
-        private void addOSMWay(long id, Map<String, Object> properties) {
+        @Override
+        public void addOSMWay(long id, Map<String, Object> properties) {
             addEvent(new OSMWay(id, properties));
         }
 
-        private void addOSMTags(Map<String, Object> properties) {
+        @Override
+        public void addOSMTags(Map<String, Object> properties) {
             addEvent(new OSMTags(data[eventsAdded - 1].osmId, properties));
         }
 
-        private long size() {
+        @Override
+        public long size() {
             return eventsAdded;
         }
 
@@ -125,13 +141,98 @@ public class OSMInput implements Input {
             return false;
         }
 
-        private void reset() {
+        @Override
+        public void reset() {
             this.eventsAdded = 0;
             this.currentRead = -1;
         }
 
         @Override
-        public void close() throws IOException {
+        public void close() {
+            reset();
+            this.data = null;
+        }
+    }
+
+    private class RelationshipEvent {
+        String type;
+        String fromId;
+        String toId;
+        Group fromGroup;
+        Group toGroup;
+
+        private RelationshipEvent(String type, String fromId, Group fromGroup, String toId, Group toGroup) {
+            this.type = type;
+            this.fromId = fromId;
+            this.toId = toId;
+            this.fromGroup = fromGroup;
+            this.toGroup = toGroup;
+        }
+    }
+
+    private class OSMTagsRel extends RelationshipEvent {
+        private OSMTagsRel(NodeEvent from, NodeEvent to) {
+            super("TAGS", from.osmId, from.group, to.osmId, to.group);
+        }
+    }
+
+    class OSMRelationshipsInputChunk implements OSMInputChunk {
+        RelationshipEvent[] data = new RelationshipEvent[CHUNK_SIZE];
+        NodeEvent previousNodeEvent = null;
+        int eventsAdded = 0;
+        int currentRead = -1;
+
+        private void addEvent(RelationshipEvent event) {
+            data[eventsAdded] = event;
+            eventsAdded++;
+        }
+
+        @Override
+        public void addOSMNode(long id, Map<String, Object> properties) {
+            previousNodeEvent = new OSMNode(id, properties);
+        }
+
+        @Override
+        public void addOSMWay(long id, Map<String, Object> properties) {
+            previousNodeEvent = new OSMWay(id, properties);
+        }
+
+        @Override
+        public void addOSMTags(Map<String, Object> properties) {
+            NodeEvent tagNode = new OSMTags(previousNodeEvent.osmId, properties);
+            OSMTagsRel tagsRel = new OSMTagsRel(previousNodeEvent, tagNode);
+            System.out.println("Creating relationship: (" + tagsRel.fromId + ")-[" + tagsRel.type + "]->(" + tagsRel.toId + ")");
+            addEvent(tagsRel);
+        }
+
+        @Override
+        public long size() {
+            return eventsAdded;
+        }
+
+        @Override
+        public boolean next(InputEntityVisitor visitor) throws IOException {
+            currentRead++;
+            if (data != null && currentRead < eventsAdded) {
+                // Make relationship between two nodes, with nodeId mapped using groups
+˚                RelationshipEvent event = data[currentRead];
+                visitor.startId(event.fromId, event.fromGroup);
+                visitor.endId(event.toId, event.toGroup);
+                visitor.type(event.type);
+                visitor.endOfEntity();
+                return true;
+            }
+            return false;
+        }
+
+        @Override
+        public void reset() {
+            this.eventsAdded = 0;
+            this.currentRead = -1;
+        }
+
+        @Override
+        public void close() {
             reset();
             this.data = null;
         }
@@ -142,29 +243,24 @@ public class OSMInput implements Input {
 
     private static final int CHUNK_SIZE = 1000;
 
-    class OSMNodesInputIterator implements InputIterator {
+    private abstract class OSMInputIterator implements InputIterator {
         private final XMLStreamReader parser;
         private boolean startedWays = false;
         private final ArrayList<Long> wayNodes = new ArrayList<>();
         private Map<String, Object> wayProperties = null;
         private int depth = 0;
         private ArrayList<String> currentXMLTags = new ArrayList<>();
-        private LinkedHashMap<String, Object> currentNodeTags = new LinkedHashMap<String, Object>();
+        private LinkedHashMap<String, Object> currentNodeTags = new LinkedHashMap<>();
 
-        OSMNodesInputIterator(XMLStreamReader parser) {
+        private OSMInputIterator(XMLStreamReader parser) {
             this.parser = parser;
         }
 
         @Override
-        public InputChunk newChunk() {
-            return new OSMNodesInputChunk();
-        }
-
-        @Override
-        public synchronized boolean next(InputChunk chunk) throws IOException {
-            OSMNodesInputChunk nodes = (OSMNodesInputChunk) chunk;
-            nodes.reset();
-            while (nodes.size() < CHUNK_SIZE) {
+        public synchronized boolean next(InputChunk chunk) {
+            OSMInputChunk events = (OSMInputChunk) chunk;
+            events.reset();
+            while (events.size() < CHUNK_SIZE) {
                 if (currentXMLTags.size() > 0 && !currentXMLTags.get(0).equals("osm")) {
                     System.out.println("Whaaaat!");
                 }
@@ -192,7 +288,7 @@ public class OSMInput implements Input {
                                             // timestamp="2008-06-11T12:36:28Z"/>
                                             Map<String, Object> nodeProperties = extractProperties("node", parser);
                                             long osm_id = Long.parseLong(nodeProperties.get("node_osm_id").toString());
-                                            nodes.addOSMNode(osm_id, nodeProperties);
+                                            events.addOSMNode(osm_id, nodeProperties);
                                         } else if (currentXMLTags.get(1).equals("way")) {
                                             if (currentXMLTags.size() == 2) {
                                                 // <way id="27359054" user="spull" uid="61533"
@@ -216,14 +312,14 @@ public class OSMInput implements Input {
                                 if (currentXMLTags.size() == 2 && currentXMLTags.get(0).equals("osm")) {
                                     if (currentXMLTags.get(1).equals("node")) {
                                         if (currentNodeTags.size() > 0) {
-                                            nodes.addOSMTags(currentNodeTags);
+                                            events.addOSMTags(currentNodeTags);
                                             currentNodeTags = new LinkedHashMap<>();
                                         }
                                     } else if (currentXMLTags.get(1).equals("way")) {
                                         long osm_id = Long.parseLong(wayProperties.get("way_osm_id").toString());
-                                        nodes.addOSMWay(osm_id, wayProperties);
+                                        events.addOSMWay(osm_id, wayProperties);
                                         if (currentNodeTags.size() > 0) {
-                                            nodes.addOSMTags(currentNodeTags);
+                                            events.addOSMTags(currentNodeTags);
                                             currentNodeTags = new LinkedHashMap<>();
                                         }
                                     }
@@ -242,11 +338,7 @@ public class OSMInput implements Input {
                     break;
                 }
             }
-            if (nodes.size() > 0) {
-                return true;    // data was created
-            } else {
-                return false;   // no data was created
-            }
+            return events.size() > 0;
         }
 
         @Override
@@ -259,44 +351,25 @@ public class OSMInput implements Input {
         }
     }
 
-    class OSMRelationshipsInputChunk implements InputChunk {
-
-        @Override
-        public boolean next(InputEntityVisitor visitor) throws IOException {
-            return false;
+    private class OSMNodesInputIterator extends OSMInputIterator {
+        private OSMNodesInputIterator(XMLStreamReader parser) {
+            super(parser);
         }
 
         @Override
-        public void close() throws IOException {
-
+        public InputChunk newChunk() {
+            return new OSMNodesInputChunk();
         }
     }
 
-    class OSMRelationshipsInputIterator implements InputIterator {
-
-        private final XMLStreamReader parser;
-
-        public OSMRelationshipsInputIterator(XMLStreamReader parser) {
-            this.parser = parser;
+    private class OSMRelationshipsInputIterator extends OSMInputIterator {
+        private OSMRelationshipsInputIterator(XMLStreamReader parser) {
+            super(parser);
         }
 
         @Override
         public InputChunk newChunk() {
             return new OSMRelationshipsInputChunk();
-        }
-
-        @Override
-        public boolean next(InputChunk chunk) throws IOException {
-            return false;
-        }
-
-        @Override
-        public void close() throws IOException {
-            try {
-                this.parser.close();
-            } catch (XMLStreamException e) {
-                throw new IOException("Failed to close: " + e.getMessage(), e);
-            }
         }
     }
 
@@ -341,7 +414,7 @@ public class OSMInput implements Input {
         // version="8" changeset="4707351" timestamp="2010-05-15T15:39:57Z">
         // <relation id="77965" user="Grillo" uid="13957" visible="true"
         // version="24" changeset="5465617" timestamp="2010-08-11T19:25:46Z">
-        LinkedHashMap<String, Object> properties = new LinkedHashMap<String, Object>();
+        LinkedHashMap<String, Object> properties = new LinkedHashMap<>();
         for (int i = 0; i < parser.getAttributeCount(); i++) {
             String prop = parser.getAttributeLocalName(i);
             String value = parser.getAttributeValue(i);

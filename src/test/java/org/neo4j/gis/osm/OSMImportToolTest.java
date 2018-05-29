@@ -30,17 +30,33 @@ public class OSMImportToolTest {
         long nodesWithTags = 202;
         long expectedOSMWays = 167;
         GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
-        map("OSMNode", expectedOSMNodes, "OSMWay", expectedOSMWays, "OSMTags", expectedOSMWays + nodesWithTags).forEach((label, count) -> {
-            assertThat("Expected specific number of '" + label + "' nodes", countNodesWithLabel(db, label), equalTo(count));
-        });
+        map(
+                "OSMNode", expectedOSMNodes,
+                "OSMWay", expectedOSMWays,
+                "OSMTags", expectedOSMWays + nodesWithTags
+        ).forEach(
+                (label, count) -> assertThat("Expected specific number of '" + label + "' nodes", countNodesWithLabel(db, label), equalTo(count))
+        );
+        map(
+                "TAGS", expectedOSMWays + nodesWithTags
+        ).forEach(
+                (type, count) -> assertThat("Expected specific number of '" + type + "' relationships", countRelationshipsWithType(db, type), equalTo(count))
+        );
     }
 
     private long countNodesWithLabel(GraphDatabaseService db, String label) {
-        Result result = db.execute("MATCH (n:" + label + ") RETURN count(n) AS count");
+        return countResult(db, "MATCH (n:" + label + ") RETURN count(n) AS count");
+    }
+
+    private long countRelationshipsWithType(GraphDatabaseService db, String type) {
+        return countResult(db, "MATCH ()-[r:" + type + "]->() RETURN count(r) AS count");
+    }
+
+    private long countResult(GraphDatabaseService db, String query) {
+        Result result = db.execute(query);
         assertThat("Expected query to return a result", result.hasNext(), equalTo(true));
         Map<String, Object> record = result.next();
         assertThat("Expected record to have a count field", record, hasKey("count"));
-        long count = (Long) record.get("count");
-        return count;
+        return (Long) record.get("count");
     }
 }
