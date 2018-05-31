@@ -34,7 +34,9 @@ public class OSMInput implements Input {
     private final Group nodesGroup;
     private final Group waysGroup;
     private final Group wayNodesGroup;
+    private final Group relationsGroup;
     private final Group tagsGroup;
+    private final Group miscGroup;
     private final Collector badCollector;
     private final FileSystemAbstraction fs;
 
@@ -45,7 +47,9 @@ public class OSMInput implements Input {
         nodesGroup = this.groups.getOrCreate("osm_nodes");
         waysGroup = this.groups.getOrCreate("osm_ways");
         wayNodesGroup = this.groups.getOrCreate("osm_way_nodes");
+        relationsGroup = this.groups.getOrCreate("osm_relations");
         tagsGroup = this.groups.getOrCreate("osm_tags");
+        miscGroup = this.groups.getOrCreate("osm_misc");
     }
 
     private XMLStreamReader parser() {
@@ -131,16 +135,35 @@ public class OSMInput implements Input {
         }
     }
 
+    private class OSMRelation extends NodeEvent {
+        private OSMRelation(long id, Map<String, Object> properties) {
+            super("OSMRelation", "r" + id, relationsGroup, properties);
+        }
+    }
+
     private class OSMTags extends NodeEvent {
         private OSMTags(String id, Map<String, Object> properties) {
             super("OSMTags", "t" + id, tagsGroup, properties);
         }
     }
 
+    private class OSMMisc extends NodeEvent {
+        private OSMMisc(String label, String id, Map<String, Object> properties) {
+            super(label, id, miscGroup, properties);
+        }
+    }
+
     interface OSMInputChunk extends InputChunk {
+
+        void addDatasetNode(Map<String, Object> properties);
+
+        void addDatasetBoundsNode(Map<String, Object> properties);
+
         void addOSMNode(long id, Map<String, Object> properties);
 
         void addOSMWay(long id, Map<String, Object> properties, List<Long> wayNodes, Map<String, Object> wayTags);
+
+        void addOSMRelation(long id, Map<String, Object> properties, ArrayList<Map<String, Object>> relationMembers, Map<String, Object> relationTags);
 
         void addOSMTags(Map<String, Object> properties);
 
@@ -149,13 +172,35 @@ public class OSMInput implements Input {
         void reset();
     }
 
-    class OSMNodesInputChunk implements OSMInputChunk {
+    class OSMInputChunkFunctions {
+        OSMMisc dataset(Map<String, Object> properties) {
+            String name = osmFile.getName();
+            if (properties != null) properties.put("name", name);
+            return new OSMMisc("OSM", "osm_" + name, properties);
+        }
+
+        OSMMisc bounds(Map<String, Object> properties) {
+            return new OSMMisc("Bounds", "bounds", properties);
+        }
+    }
+
+    class OSMNodesInputChunk extends OSMInputChunkFunctions implements OSMInputChunk {
         ArrayList<NodeEvent> data = new ArrayList<>(CHUNK_SIZE);
         NodeEvent previousTaggableNodeEvent = null;
         int currentRead = -1;
 
         private void addEvent(NodeEvent event) {
             data.add(event);
+        }
+
+        @Override
+        public void addDatasetNode(Map<String, Object> properties) {
+            addEvent(dataset(properties));
+        }
+
+        @Override
+        public void addDatasetBoundsNode(Map<String, Object> properties) {
+            addEvent(bounds(properties));
         }
 
         @Override
@@ -171,6 +216,14 @@ public class OSMInput implements Input {
             for (long osm_id : wayNodes) {
                 addEvent(new OSMWayNode(id, osm_id));
             }
+        }
+
+        @Override
+        public void addOSMRelation(long id, Map<String, Object> properties, ArrayList<Map<String, Object>> relationMembers, Map<String, Object> relationTags) {
+            previousTaggableNodeEvent = new OSMRelation(id, properties);
+            addEvent(previousTaggableNodeEvent);
+            // Currently no additional nodes are made because only relationships are made betwen the OSMRelation and the referenced nodes.
+            // However, if we figure out a way to create the geometry node during import, we could add that here too
         }
 
         @Override
@@ -210,12 +263,14 @@ public class OSMInput implements Input {
         }
     }
 
-    private class RelationshipEvent {
+    private static class RelationshipEvent {
         String type;
         String fromId;
         String toId;
         Group fromGroup;
         Group toGroup;
+        Map<String, Object> properties = EMPTY_PROPERTIES;
+        private static final Map<String, Object> EMPTY_PROPERTIES = new HashMap<>();
 
         private RelationshipEvent(String type, NodeEvent from, NodeEvent to) {
             this.type = type;
@@ -223,6 +278,11 @@ public class OSMInput implements Input {
             this.toId = to.osmId;
             this.fromGroup = from.group;
             this.toGroup = to.group;
+        }
+
+        private RelationshipEvent(String type, NodeEvent from, NodeEvent to, Map<String, Object> properties) {
+            this(type, from, to);
+            this.properties = properties;
         }
     }
 
@@ -250,13 +310,34 @@ public class OSMInput implements Input {
         }
     }
 
-    class OSMRelationshipsInputChunk implements OSMInputChunk {
+    private class OSMBoundsRel extends RelationshipEvent {
+        private OSMBoundsRel(OSMMisc from, OSMMisc to) {
+            super("BBOX", from, to);
+        }
+    }
+
+    private class OSMRelationMemberRel extends RelationshipEvent {
+        private OSMRelationMemberRel(OSMRelation from, NodeEvent to, Map<String, Object> properties) {
+            super("MEMBER", from, to, properties);
+        }
+    }
+
+    class OSMRelationshipsInputChunk extends OSMInputChunkFunctions implements OSMInputChunk {
         ArrayList<RelationshipEvent> data = new ArrayList<>(CHUNK_SIZE);
         NodeEvent previousTaggableNodeEvent = null;
         int currentRead = -1;
 
         private void addEvent(RelationshipEvent event) {
             data.add(event);
+        }
+
+        @Override
+        public void addDatasetNode(Map<String, Object> properties) {
+        }
+
+        @Override
+        public void addDatasetBoundsNode(Map<String, Object> properties) {
+            addEvent(new OSMBoundsRel(dataset(null), bounds(properties)));
         }
 
         @Override
@@ -321,10 +402,58 @@ public class OSMInput implements Input {
         }
 
         @Override
+        public void addOSMRelation(long id, Map<String, Object> properties, ArrayList<Map<String, Object>> relationMembers, Map<String, Object> relationTags) {
+            OSMRelation osmRelation = new OSMRelation(id, properties);
+            NodeEvent prevMember = null;
+            Map<String, Object> relProps = new HashMap<>(1);
+            for (Map<String, Object> memberProps : relationMembers) {
+                String memberType = (String) memberProps.get("type");
+                long member_ref = Long.parseLong(memberProps.get("ref").toString());
+                if (memberType != null) {
+                    NodeEvent member;
+                    switch (memberType) {
+                        case "node":
+                            member = new OSMNode(member_ref, null);
+                            break;
+                        case "way":
+                            member = new OSMWay(member_ref, null);
+                            break;
+                        case "relation":
+                            member = new OSMRelation(member_ref, null);
+                            break;
+                        default:
+                            error("Unknown member type: " + memberProps.toString());
+                            continue;
+                    }
+                    if (member.equals(prevMember)) {
+                        continue;
+                    }
+                    if (member.equals(osmRelation)) {
+                        error("Cannot add relation to same member: relation[" + relationTags + "] - member[" + memberProps + "]");
+                        continue;
+                    }
+                    //TODO: Create and manage GeometryMetaData (bounding box and geometry type)
+                    relProps.clear();
+                    String role = (String) memberProps.get("role");
+                    if (role != null && role.length() > 0) {
+                        relProps.put("role", role);
+                        if (role.equals("outer")) {
+                            // TODO: Set metaGeom.setPolygon();
+                        }
+                    }
+                    addEvent(new OSMRelationMemberRel(osmRelation, member, relProps));
+                    prevMember = member;
+                } else {
+                    error("Cannot process invalid relation member: " + memberProps.toString());
+                }
+            }
+        }
+
+        @Override
         public void addOSMTags(Map<String, Object> properties) {
             OSMTags tagNode = new OSMTags(previousTaggableNodeEvent.osmId, properties);
             OSMTagsRel tagsRel = new OSMTagsRel(previousTaggableNodeEvent, tagNode);
-            System.out.println("Creating relationship: (" + tagsRel.fromId + ")-[" + tagsRel.type + "]->(" + tagsRel.toId + ")");
+            //System.out.println("Creating relationship: (" + tagsRel.fromId + ")-[" + tagsRel.type + "]->(" + tagsRel.toId + ")");
             addEvent(tagsRel);
         }
 
@@ -342,6 +471,7 @@ public class OSMInput implements Input {
                 visitor.startId(event.fromId, event.fromGroup);
                 visitor.endId(event.toId, event.toGroup);
                 visitor.type(event.type);
+                event.properties.forEach(visitor::property);
                 visitor.endOfEntity();
                 return true;
             }
@@ -367,12 +497,13 @@ public class OSMInput implements Input {
 
     private abstract class OSMInputIterator implements InputIterator {
         private final XMLStreamReader parser;
-        private boolean startedWays = false;
         private final ArrayList<Long> wayNodes = new ArrayList<>();
+        private final ArrayList<Map<String, Object>> relationMembers = new ArrayList<>();
         private Map<String, Object> wayProperties = null;
+        private Map<String, Object> relationProperties = null;
         private int depth = 0;
         private ArrayList<String> currentXMLTags = new ArrayList<>();
-        private LinkedHashMap<String, Object> currentNodeTags = new LinkedHashMap<>();
+        private Map<String, Object> currentNodeTags = new LinkedHashMap<>();
 
         private OSMInputIterator(XMLStreamReader parser) {
             this.parser = parser;
@@ -397,9 +528,12 @@ public class OSMInput implements Input {
                                     Map<String, Object> properties = extractProperties(parser);
                                     currentNodeTags.put(properties.get("k").toString(), properties.get("v").toString());
                                 } else if (currentXMLTags.get(0).equals("osm")) {
-                                    //TODO: should we store dataset wide properties like bounds?
+                                    events.addDatasetNode(extractProperties(parser));
                                     if (currentXMLTags.size() > 1) {
-                                        if (currentXMLTags.get(1).equals("node")) {
+                                        String tag = currentXMLTags.get(1);
+                                        if (tag.equals("bounds")) {
+                                            events.addDatasetBoundsNode(extractProperties(parser));
+                                        } else if (tag.equals("node")) {
                                             // Create OSMNode object with all attributes (but not tags)
                                             // <node id="269682538" lat="56.0420950"
                                             // lon="12.9693483" user="sanna" uid="31450"
@@ -408,19 +542,26 @@ public class OSMInput implements Input {
                                             Map<String, Object> nodeProperties = extractProperties("node", parser);
                                             long osm_id = Long.parseLong(nodeProperties.get("node_osm_id").toString());
                                             events.addOSMNode(osm_id, nodeProperties);
-                                        } else if (currentXMLTags.get(1).equals("way")) {
+                                        } else if (tag.equals("way")) {
                                             if (currentXMLTags.size() == 2) {
                                                 // <way id="27359054" user="spull" uid="61533"
                                                 // visible="true" version="8" changeset="4707351"
                                                 // timestamp="2010-05-15T15:39:57Z">
-                                                if (!startedWays) {
-                                                    startedWays = true;
-                                                }
                                                 wayProperties = extractProperties("way", parser);
                                                 wayNodes.clear();
                                             } else if (currentXMLTags.size() == 3 && currentXMLTags.get(2).equals("nd")) {
                                                 Map<String, Object> properties = extractProperties(parser);
                                                 wayNodes.add(Long.parseLong(properties.get("ref").toString()));
+                                            }
+                                        } else if (tag.equals("relation")) {
+                                            if (currentXMLTags.size() == 2) {
+                                                // <relation id="77965" user="Grillo" uid="13957"
+                                                // visible="true" version="24" changeset="5465617"
+                                                // timestamp="2010-08-11T19:25:46Z">
+                                                relationProperties = extractProperties("relation", parser);
+                                                relationMembers.clear();
+                                            } else if (currentXMLTags.size() == 3 && currentXMLTags.get(2).equals("member")) {
+                                                relationMembers.add(extractProperties(parser));
                                             }
                                         }
                                     }
@@ -429,18 +570,17 @@ public class OSMInput implements Input {
                                 break;
                             case javax.xml.stream.XMLStreamConstants.END_ELEMENT:
                                 if (currentXMLTags.size() == 2 && currentXMLTags.get(0).equals("osm")) {
-                                    if (currentXMLTags.get(1).equals("node")) {
-                                        if (currentNodeTags.size() > 0) {
-                                            events.addOSMTags(currentNodeTags);
-                                            currentNodeTags = new LinkedHashMap<>();
-                                        }
-                                    } else if (currentXMLTags.get(1).equals("way")) {
+                                    String tag = currentXMLTags.get(1);
+                                    if (tag.equals("node")) {
+                                        addOSMTags(events);
+                                    } else if (tag.equals("way")) {
                                         long osm_id = Long.parseLong(wayProperties.get("way_osm_id").toString());
                                         events.addOSMWay(osm_id, wayProperties, wayNodes, currentNodeTags);
-                                        if (currentNodeTags.size() > 0) {
-                                            events.addOSMTags(currentNodeTags);
-                                            currentNodeTags = new LinkedHashMap<>();
-                                        }
+                                        addOSMTags(events);
+                                    } else if (tag.equals("relation")) {
+                                        long osm_id = Long.parseLong(relationProperties.get("relation_osm_id").toString());
+                                        events.addOSMRelation(osm_id, relationProperties, relationMembers, currentNodeTags);
+                                        addOSMTags(events);
                                     }
                                 }
                                 depth--;
@@ -458,6 +598,13 @@ public class OSMInput implements Input {
                 }
             }
             return events.size() > 0;
+        }
+
+        private void addOSMTags(OSMInputChunk events) {
+            if (currentNodeTags.size() > 0) {
+                events.addOSMTags(currentNodeTags);
+                currentNodeTags = new LinkedHashMap<>();
+            }
         }
 
         @Override
@@ -593,6 +740,10 @@ public class OSMInput implements Input {
             properties.put("name", name);
         }
         return properties;
+    }
+
+    private void error(String message) {
+        System.err.println(message);
     }
 
     private void error(String message, Exception e) {

@@ -85,6 +85,8 @@ public class OSMImportToolTest {
         stats.put("expectedOSMNodes", 17L);
         stats.put("expectedOSMWayNodes", 26L);
         stats.put("expectedOSMWays", 7L);
+        stats.put("expectedOSMRelations", 1L);
+        stats.put("expectedOSMRelationMembers", 3L);
         assertOSMModel(db, stats);
     }
 
@@ -101,7 +103,8 @@ public class OSMImportToolTest {
         stats.put("nodesWithTags", 202L);
         stats.put("expectedOSMWayNodes", 2588L - stats.get("closedWays"));
         stats.put("expectedOSMWays", 167L);
-        stats.put("expectedOSMTags", stats.get("expectedOSMWays") + stats.get("nodesWithTags"));
+        stats.put("expectedOSMRelations", 6L);
+        stats.put("expectedOSMRelationMembers", 40L); // 424 are defined, but only 40 exist in same file
         assertOSMModel(db, stats);
     }
 
@@ -132,21 +135,25 @@ public class OSMImportToolTest {
         long expectedOSMNodes = getFromStats(stats, "expectedOSMNodes", 0);
         long expectedOSMWayNodes = getFromStats(stats, "expectedOSMWayNodes", expectedOSMNodes);
         long expectedOSMWays = getFromStats(stats, "expectedOSMWays", 0);
+        long expectedOSMRelations = getFromStats(stats, "expectedOSMRelations", 0);
+        long expectedOSMRelationMembers = getFromStats(stats, "expectedOSMRelationMembers", 0);
         long nodesWithTags = getFromStats(stats, "nodesWithTags", 0);
         long closedWays = getFromStats(stats, "closedWays", 0);
         map(
                 "OSMNode", expectedOSMNodes,
                 "OSMWay", expectedOSMWays,
+                "OSMRelation", expectedOSMRelations,
                 "OSMWayNode", expectedOSMWayNodes,
-                "OSMTags", expectedOSMWays + nodesWithTags
+                "OSMTags", nodesWithTags + expectedOSMWays + expectedOSMRelations
         ).forEach(
                 (label, count) -> assertThat("Expected specific number of '" + label + "' nodes", countNodesWithLabel(db, label), equalTo(count))
         );
         map(
-                "TAGS", expectedOSMWays + nodesWithTags,
+                "TAGS", nodesWithTags + expectedOSMWays + expectedOSMRelations,
                 "FIRST_NODE", expectedOSMWays,
                 "NEXT", expectedOSMWayNodes - expectedOSMWays + closedWays,
-                "NODE", expectedOSMWayNodes
+                "NODE", expectedOSMWayNodes,
+                "MEMBER", expectedOSMRelationMembers
         ).forEach(
                 (type, count) -> assertThat("Expected specific number of '" + type + "' relationships", countRelationshipsWithType(db, type), equalTo(count))
         );
