@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="CGImap 0.6.0 (30553 thorn-01.openstreetmap.org)" copyright="OpenStreetMap and contributors" attribution="http://www.openstreetmap.org/copyright" license="http://opendatacommons.org/licenses/odbl/1-0/">
+    <bounds minlat="56.0567100" minlon="12.9765800" maxlat="56.0594400" maxlon="12.9811900"/>
+    <node id="763211080" visible="true" version="2" changeset="5227673" timestamp="2010-07-15T15:22:02Z" user="Craig Taverner" uid="48197" lat="56.0586829" lon="12.9768281"/>
+    <node id="819008041" visible="true" version="2" changeset="5235760" timestamp="2010-07-16T15:48:17Z" user="Craig Taverner" uid="48197" lat="56.0586090" lon="12.9779547"/>
+    <node id="819008043" visible="true" version="1" changeset="5227673" timestamp="2010-07-15T15:21:59Z" user="Craig Taverner" uid="48197" lat="56.0585241" lon="12.9797208"/>
+    <node id="819008062" visible="true" version="1" changeset="5227673" timestamp="2010-07-15T15:22:00Z" user="Craig Taverner" uid="48197" lat="56.0574740" lon="12.9792235"/>
+    <node id="819008067" visible="true" version="2" changeset="5235760" timestamp="2010-07-16T15:48:17Z" user="Craig Taverner" uid="48197" lat="56.0592873" lon="12.9785320"/>
+    <node id="819008075" visible="true" version="1" changeset="5227673" timestamp="2010-07-15T15:22:00Z" user="Craig Taverner" uid="48197" lat="56.0586660" lon="12.9774923"/>
+    <node id="819008080" visible="true" version="2" changeset="5235760" timestamp="2010-07-16T15:48:17Z" user="Craig Taverner" uid="48197" lat="56.0591715" lon="12.9782935"/>
+    <node id="819008081" visible="true" version="1" changeset="5227673" timestamp="2010-07-15T15:22:00Z" user="Craig Taverner" uid="48197" lat="56.0580406" lon="12.9809216"/>
+    <node id="819008084" visible="true" version="2" changeset="5235760" timestamp="2010-07-16T15:48:16Z" user="Craig Taverner" uid="48197" lat="56.0584185" lon="12.9783290"/>
+    <node id="819008095" visible="true" version="2" changeset="5235760" timestamp="2010-07-16T15:48:17Z" user="Craig Taverner" uid="48197" lat="56.0590648" lon="12.9789684"/>
+    <node id="819008101" visible="true" version="1" changeset="5227673" timestamp="2010-07-15T15:22:00Z" user="Craig Taverner" uid="48197" lat="56.0578523" lon="12.9803573"/>
+    <node id="820872412" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:14Z" user="Craig Taverner" uid="48197" lat="56.0588717" lon="12.9786037"/>
+    <node id="820872416" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:14Z" user="Craig Taverner" uid="48197" lat="56.0590332" lon="12.9789221"/>
+    <node id="820872417" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:14Z" user="Craig Taverner" uid="48197" lat="56.0588310" lon="12.9793987"/>
+    <node id="820872419" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:14Z" user="Craig Taverner" uid="48197" lat="56.0588053" lon="12.9793321"/>
+    <node id="820872424" visible="true" version="2" changeset="39043544" timestamp="2016-05-02T16:11:47Z" user="Essin" uid="438299" lat="56.0570003" lon="12.9778221"/>
+    <node id="820872425" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:15Z" user="Craig Taverner" uid="48197" lat="56.0586609" lon="12.9789492"/>
+    <way id="67835018" visible="true" version="3" changeset="5238034" timestamp="2010-07-16T20:57:38Z" user="Craig Taverner" uid="48197">
+        <nd ref="763211080"/>
+        <nd ref="819008075"/>
+        <nd ref="819008080"/>
+        <nd ref="819008067"/>
+        <nd ref="819008095"/>
+        <nd ref="820872417"/>
+        <nd ref="819008043"/>
+        <nd ref="819008101"/>
+        <tag k="highway" v="residential"/>
+        <tag k="name" v="Algatan"/>
+    </way>
+    <way id="68083515" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:15Z" user="Craig Taverner" uid="48197">
+        <nd ref="820872419"/>
+        <nd ref="820872425"/>
+        <tag k="bicycle" v="yes"/>
+        <tag k="highway" v="footway"/>
+    </way>
+    <way id="68083517" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:15Z" user="Craig Taverner" uid="48197">
+        <nd ref="820872425"/>
+        <nd ref="819008084"/>
+        <tag k="bicycle" v="yes"/>
+        <tag k="highway" v="footway"/>
+    </way>
+    <way id="68083518" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:15Z" user="Craig Taverner" uid="48197">
+        <nd ref="820872417"/>
+        <nd ref="820872419"/>
+        <tag k="highway" v="service"/>
+        <tag k="service" v="parking_aisle"/>
+    </way>
+    <way id="68083520" visible="true" version="2" changeset="5238034" timestamp="2010-07-16T20:57:39Z" user="Craig Taverner" uid="48197">
+        <nd ref="819008075"/>
+        <nd ref="819008041"/>
+        <nd ref="819008084"/>
+        <nd ref="819008062"/>
+        <tag k="highway" v="residential"/>
+        <tag k="name" v="Bokgatan"/>
+    </way>
+    <way id="68083521" visible="true" version="2" changeset="39043544" timestamp="2016-05-02T16:11:39Z" user="Essin" uid="438299">
+        <nd ref="820872419"/>
+        <nd ref="820872425"/>
+        <nd ref="820872412"/>
+        <nd ref="820872416"/>
+        <nd ref="820872419"/>
+        <tag k="amenity" v="parking"/>
+    </way>
+    <way id="365780915" visible="true" version="1" changeset="33344733" timestamp="2015-08-14T23:42:47Z" user="Essin" uid="438299">
+        <nd ref="820872424"/>
+        <nd ref="819008062"/>
+        <nd ref="819008101"/>
+        <nd ref="819008081"/>
+        <tag k="highway" v="residential"/>
+        <tag k="name" v="Jens Billes Gata"/>
+    </way>
+    <relation id="999999999" visible="true" version="1" changeset="999999999" timestamp="2018-05-05T12:12:12Z" user="Craig Taverner" uid="48197">
+        <member type="way" ref="68083517" role=""/>
+        <member type="way" ref="68083515" role=""/>
+        <member type="way" ref="68083518" role=""/>
+        <tag k="name" v="Bokgatan till Algatan"/>
+        <tag k="bicycle" v="yes"/>
+        <tag k="highway" v="footway"/>
+    </relation>
+</osm>

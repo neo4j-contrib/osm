@@ -2,12 +2,15 @@ package org.neo4j.gis.osm.importer;
 
 import java.io.*;
 import java.nio.charset.Charset;
-import java.text.DateFormat;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.function.ToIntFunction;
 
+import org.neo4j.graphdb.spatial.CRS;
+import org.neo4j.graphdb.spatial.Coordinate;
+import org.neo4j.graphdb.spatial.Point;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.fs.FileUtils;
 import org.neo4j.unsafe.impl.batchimport.InputIterable;
@@ -20,6 +23,10 @@ import org.neo4j.values.storable.Value;
 
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+
+import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_LINESTRING;
+import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_POINT;
+import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_POLYGON;
 
 public class OSMInput implements Input {
     private final File osmFile;
@@ -51,6 +58,29 @@ public class OSMInput implements Input {
         }
     }
 
+    public enum RoadDirection {
+        BOTH, FORWARD, BACKWARD;
+    }
+
+    /**
+     * Retrieves the direction of the given road, i.e. whether it is a one-way road from its start node,
+     * a one-way road to its start node or a two-way road.
+     *
+     * @param wayProperties the property map of the road
+     * @return BOTH if it's a two-way road, FORWARD if it's a one-way road from the start node,
+     * or BACKWARD if it's a one-way road to the start node
+     */
+    public static RoadDirection getRoadDirection(Map<String, Object> wayProperties) {
+        String oneway = (String) wayProperties.get("oneway");
+        if (null != oneway) {
+            if ("-1".equals(oneway)) return RoadDirection.BACKWARD;
+            if ("1".equals(oneway) || "yes".equalsIgnoreCase(oneway)
+                    || "true".equalsIgnoreCase(oneway))
+                return RoadDirection.FORWARD;
+        }
+        return RoadDirection.BOTH;
+    }
+
     private static class NodeEvent {
         String label;
         String osmId;
@@ -68,6 +98,15 @@ public class OSMInput implements Input {
         private NodeEvent(String label, String osmId, Group group) {
             this(label, osmId, group, EMPTY_PROPERTIES);
         }
+
+        public boolean equals(Object obj) {
+            if (obj instanceof NodeEvent) {
+                NodeEvent other = (NodeEvent) obj;
+                return other.group == this.group && other.osmId.equals(this.osmId);
+            } else {
+                return false;
+            }
+        }
     }
 
     private class OSMNode extends NodeEvent {
@@ -81,8 +120,8 @@ public class OSMInput implements Input {
     }
 
     private class OSMWayNode extends NodeEvent {
-        private OSMWayNode(long id) {
-            super("OSMWayNode", "wn" + id, wayNodesGroup);
+        private OSMWayNode(long wayId, long nodeId) {
+            super("OSMWayNode", "w" + wayId + "n" + nodeId, wayNodesGroup);
         }
     }
 
@@ -101,7 +140,7 @@ public class OSMInput implements Input {
     interface OSMInputChunk extends InputChunk {
         void addOSMNode(long id, Map<String, Object> properties);
 
-        void addOSMWay(long id, Map<String, Object> properties, ArrayList<Long> wayNodes);
+        void addOSMWay(long id, Map<String, Object> properties, List<Long> wayNodes, Map<String, Object> wayTags);
 
         void addOSMTags(Map<String, Object> properties);
 
@@ -126,11 +165,11 @@ public class OSMInput implements Input {
         }
 
         @Override
-        public void addOSMWay(long id, Map<String, Object> properties, ArrayList<Long> wayNodes) {
+        public void addOSMWay(long id, Map<String, Object> properties, List<Long> wayNodes, Map<String, Object> wayTags) {
             previousTaggableNodeEvent = new OSMWay(id, properties);
             addEvent(previousTaggableNodeEvent);
             for (long osm_id : wayNodes) {
-                addEvent(new OSMWayNode(osm_id));
+                addEvent(new OSMWayNode(id, osm_id));
             }
         }
 
@@ -226,27 +265,59 @@ public class OSMInput implements Input {
         }
 
         @Override
-        public void addOSMWay(long id, Map<String, Object> properties, ArrayList<Long> wayNodes) {
-            OSMWay osmWay = new OSMWay(id, properties);
-            OSMWayNode firstWayNode = null;
+        public void addOSMWay(long wayId, Map<String, Object> properties, List<Long> wayNodes, Map<String, Object> wayTags) {
+            RoadDirection direction = getRoadDirection(wayTags);
+            String name = (String) wayTags.get("name");
+            int geometry = GTYPE_LINESTRING;
+            boolean isRoad = wayTags.containsKey("highway");
+            if (isRoad) {
+                properties.put("oneway", direction.toString());
+                properties.put("highway", wayTags.get("highway"));
+            }
+            if (name != null) {
+                // Copy name tag to way because this seems like a valuable location for such a property
+                properties.put("name", name);
+            }
+
+            OSMWay osmWay = new OSMWay(wayId, properties);
             OSMWayNode previousWayNode = null;
-            for (long osm_id : wayNodes) {
-                OSMNode osmNode = new OSMNode(osm_id);
-                OSMWayNode wayNode = new OSMWayNode(osm_id);
+            OSMNode firstNode = null;
+            OSMNode previousNode = null;
+            HashSet<Long> madeWayNodes = new HashSet<>(wayNodes.size());   // TODO: Find a less GC sensitive way
+            for (long osmId : wayNodes) {
+                OSMNode osmNode = new OSMNode(osmId);
+                if (osmNode.equals(previousNode)) {
+                    continue;
+                }
+                OSMWayNode wayNode = new OSMWayNode(wayId, osmId);
+                // link each proxy node to the actual point node, unless we have loops
+                if (!madeWayNodes.contains(osmId)) {
+                    madeWayNodes.add(osmId);
+                    addEvent(new OSMWayNodeRel(wayNode, osmNode));
+                }
                 // Link the way to the first proxy node
-                if (firstWayNode == null) {
-                    firstWayNode = wayNode;
+                if (firstNode == null) {
                     addEvent(new OSMFirstWayNodeRel(osmWay, wayNode));
                 }
-                // link each proxy node to the actual point node
-                addEvent(new OSMWayNodeRel(wayNode, osmNode));
                 if (previousWayNode != null) {
                     // link each proxy node to the next proxy node
                     addEvent(new OSMNextWayNodeRel(previousWayNode, wayNode));
                 }
                 previousWayNode = wayNode;
+                previousNode = osmNode;
+                if (firstNode == null) {
+                    firstNode = osmNode;
+                }
+            }
+            if (firstNode != null && firstNode.equals(previousNode)) {
+                geometry = GTYPE_POLYGON;
+            }
+            if (wayNodes.size() < 2) {
+                geometry = GTYPE_POINT;
             }
             previousTaggableNodeEvent = osmWay;
+            //TODO: Add geometry
+            //addNodeGeometry( way, geometry, bbox, wayNodes.size() );
         }
 
         @Override
@@ -290,7 +361,7 @@ public class OSMInput implements Input {
     }
 
     // "2008-06-11T12:36:28Z"
-    private DateFormat timestampFormat = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'");
+    private DateTimeFormatter timestampFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
 
     private static final int CHUNK_SIZE = 1000;
 
@@ -365,7 +436,7 @@ public class OSMInput implements Input {
                                         }
                                     } else if (currentXMLTags.get(1).equals("way")) {
                                         long osm_id = Long.parseLong(wayProperties.get("way_osm_id").toString());
-                                        events.addOSMWay(osm_id, wayProperties, wayNodes);
+                                        events.addOSMWay(osm_id, wayProperties, wayNodes, currentNodeTags);
                                         if (currentNodeTags.size() > 0) {
                                             events.addOSMTags(currentNodeTags);
                                             currentNodeTags = new LinkedHashMap<>();
@@ -480,14 +551,43 @@ public class OSMInput implements Input {
                 }
             } else if (prop.equals("timestamp")) {
                 try {
-                    Date timestamp = timestampFormat.parse(value);
-                    properties.put(prop, timestamp.getTime());
-                } catch (ParseException e) {
+                    LocalDateTime timestamp = LocalDateTime.parse(value, timestampFormat);
+                    properties.put(prop, timestamp);
+                } catch (DateTimeParseException e) {
                     error("Error parsing timestamp", e);
                 }
             } else {
                 properties.put(prop, value);
             }
+        }
+        if (properties.containsKey("lat") && properties.containsKey("lon")) {
+            Coordinate coord = new Coordinate((double) properties.get("lon"), (double) properties.get("lat"));
+            properties.put("location", new Point() {
+                @Override
+                public List<Coordinate> getCoordinates() {
+                    return Collections.singletonList(coord);
+                }
+
+                @Override
+                public CRS getCRS() {
+                    return new CRS() {
+                        @Override
+                        public int getCode() {
+                            return 4326;
+                        }
+
+                        @Override
+                        public String getType() {
+                            return "wgs-84";
+                        }
+
+                        @Override
+                        public String getHref() {
+                            return "http://spatialreference.org/ref/epsg/4326/";
+                        }
+                    };
+                }
+            });
         }
         if (name != null) {
             properties.put("name", name);

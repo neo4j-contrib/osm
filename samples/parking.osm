@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="CGImap 0.6.0 (30553 thorn-01.openstreetmap.org)" copyright="OpenStreetMap and contributors" attribution="http://www.openstreetmap.org/copyright" license="http://opendatacommons.org/licenses/odbl/1-0/">
+ <bounds minlat="56.0567100" minlon="12.9765800" maxlat="56.0594400" maxlon="12.9811900"/>
+ <node id="820872412" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:14Z" user="Craig Taverner" uid="48197" lat="56.0588717" lon="12.9786037"/>
+ <node id="820872416" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:14Z" user="Craig Taverner" uid="48197" lat="56.0590332" lon="12.9789221"/>
+ <node id="820872419" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:14Z" user="Craig Taverner" uid="48197" lat="56.0588053" lon="12.9793321"/>
+ <node id="820872425" visible="true" version="1" changeset="5235760" timestamp="2010-07-16T15:48:15Z" user="Craig Taverner" uid="48197" lat="56.0586609" lon="12.9789492"/>
+ <way id="68083521" visible="true" version="2" changeset="39043544" timestamp="2016-05-02T16:11:39Z" user="Essin" uid="438299">
+  <nd ref="820872419"/>
+  <nd ref="820872425"/>
+  <nd ref="820872412"/>
+  <nd ref="820872416"/>
+  <nd ref="820872419"/>
+  <tag k="amenity" v="parking"/>
+ </way>
+</osm>
