@@ -13,6 +13,7 @@
         <neo4j.version>3.4.0</neo4j.version>
         <javac.target>1.8</javac.target>
         <jmh.version>1.19</jmh.version>
+        <compress.version>1.16.1</compress.version>
     </properties>
 
     <organization>
@@ -51,6 +52,12 @@
             <groupId>org.neo4j</groupId>
             <artifactId>neo4j</artifactId>
             <version>${neo4j.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+            <version>${compress.version}</version>
             <scope>provided</scope>
         </dependency>
         <dependency>

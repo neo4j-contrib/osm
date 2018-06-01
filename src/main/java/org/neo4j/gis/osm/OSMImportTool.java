@@ -4,6 +4,7 @@ import org.neo4j.gis.osm.importer.OSMInput;
 import org.neo4j.gis.osm.importer.PrintingImportLogicMonitor;
 import org.neo4j.io.fs.DefaultFileSystemAbstraction;
 import org.neo4j.io.fs.FileSystemAbstraction;
+import org.neo4j.io.fs.FileUtils;
 import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.impl.logging.StoreLogService;
@@ -36,13 +37,16 @@ public class OSMImportTool {
     }
 
     public static void main(String[] args) throws Exception {
+        File osmFile = new File(args[0]);
+        File storeDir = new File(args[1]);
+        FileUtils.deleteRecursively(storeDir);
+        storeDir.mkdirs();
         try ( FileSystemAbstraction fs = new DefaultFileSystemAbstraction() ) {
-            new OSMImportTool(args[0], args[1]).run(fs);
+            new OSMImportTool(osmFile.getCanonicalPath(), storeDir.getCanonicalPath()).run(fs);
         }
     }
 
     public void run(FileSystemAbstraction fs) throws IOException {
-
         boolean detailedProgress = true;
         PrintStream out = System.out;
         PrintStream err = System.err;

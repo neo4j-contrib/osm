@@ -8,6 +8,7 @@ import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.function.ToIntFunction;
 
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 import org.neo4j.graphdb.spatial.CRS;
 import org.neo4j.graphdb.spatial.Coordinate;
 import org.neo4j.graphdb.spatial.Point;
@@ -60,10 +61,19 @@ public class OSMInput implements Input {
         miscGroup = this.groups.getOrCreate("osm_misc");
     }
 
+    private InputStream inputStream() throws IOException {
+        FileInputStream input = new FileInputStream(osmFile);
+        if (osmFile.getName().endsWith(".bz2")) {
+            return new BZip2CompressorInputStream(input);
+        } else {
+            return input;
+        }
+    }
+
     private XMLStreamReader parser() {
         try {
             javax.xml.stream.XMLInputFactory factory = javax.xml.stream.XMLInputFactory.newInstance();
-            InputStreamReader reader = new InputStreamReader(new FileInputStream(osmFile), Charset.defaultCharset());
+            InputStreamReader reader = new InputStreamReader(inputStream(), Charset.defaultCharset());
             return factory.createXMLStreamReader(reader);
         } catch (Exception e) {
             throw new RuntimeException("Failed to open XML: " + e.getMessage(), e);
@@ -125,6 +135,11 @@ public class OSMInput implements Input {
                 return false;
             }
         }
+
+        @Override
+        public String toString() {
+            return this.getClass().getName() + ":" + label + "[" + osmId + "]";
+        }
     }
 
     private class OSMNode extends NodeEvent {
@@ -180,6 +195,10 @@ public class OSMInput implements Input {
         void addOSMRelation(long id, Map<String, Object> properties, ArrayList<Map<String, Object>> relationMembers, Map<String, Object> relationTags);
 
         void addOSMTags(Map<String, Object> properties);
+
+        boolean insideTaggableEvent();
+
+        void endTaggableEvent();
 
         long size();
 
@@ -257,7 +276,21 @@ public class OSMInput implements Input {
 
         @Override
         public void addOSMTags(Map<String, Object> properties) {
-            addEvent(new OSMTags(previousTaggableNodeEvent.osmId, properties));
+            if (insideTaggableEvent()) {
+                addEvent(new OSMTags(previousTaggableNodeEvent.osmId, properties));
+            } else {
+                error("Unexpected null parent node for tags: " + properties);
+            }
+        }
+
+        @Override
+        public boolean insideTaggableEvent() {
+            return this.previousTaggableNodeEvent != null;
+        }
+
+        @Override
+        public void endTaggableEvent() {
+            this.previousTaggableNodeEvent = null;
         }
 
         @Override
@@ -476,10 +509,24 @@ public class OSMInput implements Input {
 
         @Override
         public void addOSMTags(Map<String, Object> properties) {
-            OSMTags tagNode = new OSMTags(previousTaggableNodeEvent.osmId, properties);
-            OSMTagsRel tagsRel = new OSMTagsRel(previousTaggableNodeEvent, tagNode);
-            //System.out.println("Creating relationship: (" + tagsRel.fromId + ")-[" + tagsRel.type + "]->(" + tagsRel.toId + ")");
-            addEvent(tagsRel);
+            if (insideTaggableEvent()) {
+                OSMTags tagNode = new OSMTags(previousTaggableNodeEvent.osmId, properties);
+                OSMTagsRel tagsRel = new OSMTagsRel(previousTaggableNodeEvent, tagNode);
+                //System.out.println("Creating relationship: (" + tagsRel.fromId + ")-[" + tagsRel.type + "]->(" + tagsRel.toId + ")");
+                addEvent(tagsRel);
+            } else {
+                error("Unexpectedly null parent for tags: " + properties);
+            }
+        }
+
+        @Override
+        public boolean insideTaggableEvent() {
+            return this.previousTaggableNodeEvent != null;
+        }
+
+        @Override
+        public void endTaggableEvent() {
+            this.previousTaggableNodeEvent = null;
         }
 
         @Override
@@ -538,7 +585,7 @@ public class OSMInput implements Input {
         public synchronized boolean next(InputChunk chunk) {
             OSMInputChunk events = (OSMInputChunk) chunk;
             events.reset();
-            while (events.size() < CHUNK_SIZE) {
+            while (events.size() < CHUNK_SIZE || events.insideTaggableEvent()) {
                 try {
                     if (parser.hasNext()) {
                         int event = parser.next();
@@ -622,6 +669,9 @@ public class OSMInput implements Input {
                     break;
                 }
             }
+            if (events.size() > CHUNK_SIZE * 2) {
+                System.out.println("Created unexpectedly large chunk: " + events.size());
+            }
             return events.size() > 0;
         }
 
@@ -630,6 +680,7 @@ public class OSMInput implements Input {
                 events.addOSMTags(currentNodeTags);
                 currentNodeTags = new LinkedHashMap<>();
             }
+            events.endTaggableEvent();
         }
 
         @Override
