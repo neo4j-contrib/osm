@@ -19,6 +19,8 @@ import org.neo4j.unsafe.impl.batchimport.cache.NumberArrayFactory;
 import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMapper;
 import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMappers;
 import org.neo4j.unsafe.impl.batchimport.input.*;
+import org.neo4j.values.storable.CRSCalculator;
+import org.neo4j.values.storable.CoordinateReferenceSystem;
 import org.neo4j.values.storable.Value;
 
 import javax.xml.stream.XMLStreamException;
@@ -39,6 +41,12 @@ public class OSMInput implements Input {
     private final Group miscGroup;
     private final Collector badCollector;
     private final FileSystemAbstraction fs;
+
+    // This uses an internal API of Neo4j, which could be a compatibility issue moving forward
+    // Two options: get Neo4j to make this public, or we create our own version here. The
+    // CRS is easy, but the calculator is less so.
+    private final CoordinateReferenceSystem wgs84 = CoordinateReferenceSystem.WGS84;
+    private final CRSCalculator calculator = wgs84.getCalculator();
 
     public OSMInput(FileSystemAbstraction fs, File osmFile, Collector badCollector) {
         this.fs = fs;
@@ -70,6 +78,12 @@ public class OSMInput implements Input {
      * Retrieves the direction of the given road, i.e. whether it is a one-way road from its start node,
      * a one-way road to its start node or a two-way road.
      *
+     * <ul>
+     * <li><code>"oneway" = "-1"</code> BACKWARD</li>
+     * <li><code>"oneway" = "1" || "yes" || "true"</code> FORWARD</li>
+     * <li>Anything else means BOTH (not one-way)</li>
+     * </ul>
+     *
      * @param wayProperties the property map of the road
      * @return BOTH if it's a two-way road, FORWARD if it's a one-way road from the start node,
      * or BACKWARD if it's a one-way road to the start node
@@ -77,9 +91,9 @@ public class OSMInput implements Input {
     public static RoadDirection getRoadDirection(Map<String, Object> wayProperties) {
         String oneway = (String) wayProperties.get("oneway");
         if (null != oneway) {
-            if ("-1".equals(oneway)) return RoadDirection.BACKWARD;
-            if ("1".equals(oneway) || "yes".equalsIgnoreCase(oneway)
-                    || "true".equalsIgnoreCase(oneway))
+            if ("-1".equals(oneway))
+                return RoadDirection.BACKWARD;
+            if ("1".equals(oneway) || "yes".equalsIgnoreCase(oneway) || "true".equalsIgnoreCase(oneway))
                 return RoadDirection.FORWARD;
         }
         return RoadDirection.BOTH;
@@ -182,6 +196,20 @@ public class OSMInput implements Input {
         OSMMisc bounds(Map<String, Object> properties) {
             return new OSMMisc("Bounds", "bounds", properties);
         }
+
+        OSMWay way(long id, Map<String, Object> properties, Map<String, Object> wayTags, RoadDirection direction) {
+            String name = (String) wayTags.get("name");
+            boolean isRoad = wayTags.containsKey("highway");
+            if (isRoad) {
+                properties.put("oneway", direction.toString());
+                properties.put("highway", wayTags.get("highway"));
+            }
+            if (name != null) {
+                // Copy name tag to way because this seems like a valuable location for such a property
+                properties.put("name", name);
+            }
+            return new OSMWay(id, properties);
+        }
     }
 
     class OSMNodesInputChunk extends OSMInputChunkFunctions implements OSMInputChunk {
@@ -211,7 +239,8 @@ public class OSMInput implements Input {
 
         @Override
         public void addOSMWay(long id, Map<String, Object> properties, List<Long> wayNodes, Map<String, Object> wayTags) {
-            previousTaggableNodeEvent = new OSMWay(id, properties);
+            RoadDirection direction = getRoadDirection(wayTags);
+            previousTaggableNodeEvent = way(id, properties, wayTags, direction);
             addEvent(previousTaggableNodeEvent);
             for (long osm_id : wayNodes) {
                 addEvent(new OSMWayNode(id, osm_id));
@@ -348,22 +377,12 @@ public class OSMInput implements Input {
         @Override
         public void addOSMWay(long wayId, Map<String, Object> properties, List<Long> wayNodes, Map<String, Object> wayTags) {
             RoadDirection direction = getRoadDirection(wayTags);
-            String name = (String) wayTags.get("name");
+            OSMWay osmWay = way(wayId, properties, wayTags, direction);
             int geometry = GTYPE_LINESTRING;
-            boolean isRoad = wayTags.containsKey("highway");
-            if (isRoad) {
-                properties.put("oneway", direction.toString());
-                properties.put("highway", wayTags.get("highway"));
-            }
-            if (name != null) {
-                // Copy name tag to way because this seems like a valuable location for such a property
-                properties.put("name", name);
-            }
-
-            OSMWay osmWay = new OSMWay(wayId, properties);
             OSMWayNode previousWayNode = null;
             OSMNode firstNode = null;
             OSMNode previousNode = null;
+            LinkedHashMap<String, Object> relProps = new LinkedHashMap<String, Object>();
             HashSet<Long> madeWayNodes = new HashSet<>(wayNodes.size());   // TODO: Find a less GC sensitive way
             for (long osmId : wayNodes) {
                 OSMNode osmNode = new OSMNode(osmId);
@@ -381,8 +400,14 @@ public class OSMInput implements Input {
                     addEvent(new OSMFirstWayNodeRel(osmWay, wayNode));
                 }
                 if (previousWayNode != null) {
-                    // link each proxy node to the next proxy node
-                    addEvent(new OSMNextWayNodeRel(previousWayNode, wayNode));
+                    // link each proxy node to the next proxy node.
+                    // We default to bi-directional (and don't store direction in the way node), but if it
+                    // is one-way we mark it as such, and define the direction using the relationship direction
+                    if (direction == RoadDirection.BACKWARD) {
+                        addEvent(new OSMNextWayNodeRel(wayNode, previousWayNode));
+                    } else {
+                        addEvent(new OSMNextWayNodeRel(previousWayNode, wayNode));
+                    }
                 }
                 previousWayNode = wayNode;
                 previousNode = osmNode;
@@ -685,10 +710,8 @@ public class OSMInput implements Input {
             String prop = parser.getAttributeLocalName(i);
             String value = parser.getAttributeValue(i);
             if (name != null && prop.equals("id")) {
-                prop = name + "_osm_id";
-                name = null;
-            }
-            if (prop.equals("lat") || prop.equals("lon")) {
+                properties.put(name + "_osm_id", Long.parseLong(value));
+            } else if (prop.equals("lat") || prop.equals("lon")) {
                 properties.put(prop, Double.parseDouble(value));
             } else if (name != null && prop.equals("version")) {
                 properties.put(prop, Integer.parseInt(value));
@@ -717,22 +740,7 @@ public class OSMInput implements Input {
 
                 @Override
                 public CRS getCRS() {
-                    return new CRS() {
-                        @Override
-                        public int getCode() {
-                            return 4326;
-                        }
-
-                        @Override
-                        public String getType() {
-                            return "wgs-84";
-                        }
-
-                        @Override
-                        public String getHref() {
-                            return "http://spatialreference.org/ref/epsg/4326/";
-                        }
-                    };
+                    return wgs84;
                 }
             });
         }
