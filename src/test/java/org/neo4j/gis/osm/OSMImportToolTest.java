@@ -109,18 +109,20 @@ public class OSMImportToolTest {
         return storeDir;
     }
 
-    private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) throws IOException {
+    private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
         File osmFile = new File("samples/" + name + ".osm");
         if (osmFile.exists()) {
-            File storeDir = prepareStoreDir(name);
-            try (FileSystemAbstraction fs = new DefaultFileSystemAbstraction()) {
-                new OSMImportTool(osmFile.getCanonicalPath(), storeDir.getCanonicalPath()).run(fs);
+            try {
+                File storeDir = prepareStoreDir(name);
+                OSMImportTool.main(new String[]{"--into", storeDir.getCanonicalPath(), osmFile.getCanonicalPath()});
+                System.out.println("\nFinished importing " + osmFile + "- analysing database ...");
+                GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
+                Map<String, Long> stats = debugOSMModel(db);
+                assertions.accept(db, stats);
+                db.shutdown();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
             }
-            System.out.println("\nFinished importing " + osmFile + "- analysing database ...");
-            GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
-            Map<String, Long> stats = debugOSMModel(db);
-            assertions.accept(db, stats);
-            db.shutdown();
         }
     }
 

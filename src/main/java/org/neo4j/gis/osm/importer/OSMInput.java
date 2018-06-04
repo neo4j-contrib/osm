@@ -51,9 +51,9 @@ public class OSMInput implements Input {
     private final CRSCalculator calculator = wgs84.getCalculator();
     private final Configuration config;
 
-    public OSMInput(FileSystemAbstraction fs, File osmFile, Configuration config, Collector badCollector) {
+    public OSMInput(FileSystemAbstraction fs, String[] osmFiles, Configuration config, Collector badCollector) {
         this.fs = fs;
-        this.osmFile = osmFile;
+        this.osmFile = new File(osmFiles[0]);
         this.config = config;
         this.badCollector = badCollector;
         nodesGroup = this.groups.getOrCreate("osm_nodes");
@@ -264,8 +264,12 @@ public class OSMInput implements Input {
             RoadDirection direction = getRoadDirection(wayTags);
             previousTaggableNodeEvent = way(id, properties, wayTags, direction);
             addEvent(previousTaggableNodeEvent);
-            for (long osm_id : wayNodes) {
-                addEvent(new OSMWayNode(id, osm_id));
+            HashSet<Long> madeWayNodes = new HashSet<>(wayNodes.size());   // TODO: Find a less GC sensitive way
+            for (long osmId : wayNodes) {
+                if (!madeWayNodes.contains(osmId)) {
+                    madeWayNodes.add(osmId);
+                    addEvent(new OSMWayNode(id, osmId));
+                }
             }
         }
 
@@ -508,6 +512,7 @@ public class OSMInput implements Input {
                     error("Cannot process invalid relation member: " + memberProps.toString());
                 }
             }
+            previousTaggableNodeEvent = osmRelation;
         }
 
         @Override
@@ -601,8 +606,9 @@ public class OSMInput implements Input {
                                     Map<String, Object> properties = extractProperties(parser);
                                     currentNodeTags.put(properties.get("k").toString(), properties.get("v").toString());
                                 } else if (currentXMLTags.get(0).equals("osm")) {
-                                    events.addDatasetNode(extractProperties(parser));
-                                    if (currentXMLTags.size() > 1) {
+                                    if (currentXMLTags.size() == 1) {
+                                        events.addDatasetNode(extractProperties(parser));
+                                    } else if (currentXMLTags.size() > 1) {
                                         String tag = currentXMLTags.get(1);
                                         if (tag.equals("bounds")) {
                                             events.addDatasetBoundsNode(extractProperties(parser));
