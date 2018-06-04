@@ -284,9 +284,16 @@ public class OSMInput implements Input {
         @Override
         public void addOSMTags(Map<String, Object> properties) {
             if (insideTaggableEvent()) {
+                augmentProperties("name", properties, previousTaggableNodeEvent.properties);
                 addEvent(new OSMTags(previousTaggableNodeEvent.osmId, properties));
             } else {
                 error("Unexpected null parent node for tags: " + properties);
+            }
+        }
+
+        private void augmentProperties(String key, Map<String, Object> from, Map<String, Object> to) {
+            if (from.containsKey(key) && !to.containsKey(key)) {
+                to.put(key, from.get(key));
             }
         }
 
@@ -801,9 +808,6 @@ public class OSMInput implements Input {
                     return wgs84;
                 }
             });
-        }
-        if (name != null) {
-            properties.put("name", name);
         }
         return properties;
     }
