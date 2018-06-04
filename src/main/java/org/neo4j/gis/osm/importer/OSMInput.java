@@ -14,6 +14,7 @@ import org.neo4j.graphdb.spatial.Coordinate;
 import org.neo4j.graphdb.spatial.Point;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.fs.FileUtils;
+import org.neo4j.unsafe.impl.batchimport.Configuration;
 import org.neo4j.unsafe.impl.batchimport.InputIterable;
 import org.neo4j.unsafe.impl.batchimport.InputIterator;
 import org.neo4j.unsafe.impl.batchimport.cache.NumberArrayFactory;
@@ -48,10 +49,12 @@ public class OSMInput implements Input {
     // CRS is easy, but the calculator is less so.
     private final CoordinateReferenceSystem wgs84 = CoordinateReferenceSystem.WGS84;
     private final CRSCalculator calculator = wgs84.getCalculator();
+    private final Configuration config;
 
-    public OSMInput(FileSystemAbstraction fs, File osmFile, Collector badCollector) {
+    public OSMInput(FileSystemAbstraction fs, File osmFile, Configuration config, Collector badCollector) {
         this.fs = fs;
         this.osmFile = osmFile;
+        this.config = config;
         this.badCollector = badCollector;
         nodesGroup = this.groups.getOrCreate("osm_nodes");
         waysGroup = this.groups.getOrCreate("osm_ways");
@@ -232,7 +235,7 @@ public class OSMInput implements Input {
     }
 
     class OSMNodesInputChunk extends OSMInputChunkFunctions implements OSMInputChunk {
-        ArrayList<NodeEvent> data = new ArrayList<>(CHUNK_SIZE);
+        ArrayList<NodeEvent> data = new ArrayList<>(config.batchSize());
         NodeEvent previousTaggableNodeEvent = null;
         int currentRead = -1;
 
@@ -385,7 +388,7 @@ public class OSMInput implements Input {
     }
 
     class OSMRelationshipsInputChunk extends OSMInputChunkFunctions implements OSMInputChunk {
-        ArrayList<RelationshipEvent> data = new ArrayList<>(CHUNK_SIZE);
+        ArrayList<RelationshipEvent> data = new ArrayList<>(config.batchSize());
         NodeEvent previousTaggableNodeEvent = null;
         int currentRead = -1;
 
@@ -565,8 +568,6 @@ public class OSMInput implements Input {
     // "2008-06-11T12:36:28Z"
     private DateTimeFormatter timestampFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
 
-    private static final int CHUNK_SIZE = 1000;
-
     private abstract class OSMInputIterator implements InputIterator {
         private final XMLStreamReader parser;
         private final ArrayList<Long> wayNodes = new ArrayList<>();
@@ -585,7 +586,7 @@ public class OSMInput implements Input {
         public synchronized boolean next(InputChunk chunk) {
             OSMInputChunk events = (OSMInputChunk) chunk;
             events.reset();
-            while (events.size() < CHUNK_SIZE || events.insideTaggableEvent()) {
+            while (events.size() < config.batchSize() || events.insideTaggableEvent()) {
                 try {
                     if (parser.hasNext()) {
                         int event = parser.next();
@@ -669,7 +670,7 @@ public class OSMInput implements Input {
                     break;
                 }
             }
-            if (events.size() > CHUNK_SIZE * 2) {
+            if (events.size() > config.batchSize() * 10) {
                 System.out.println("Created unexpectedly large chunk: " + events.size());
             }
             return events.size() > 0;

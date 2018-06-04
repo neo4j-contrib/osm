@@ -1,5 +1,6 @@
 package org.neo4j.gis.osm;
 
+import org.neo4j.commandline.dbms.config.WrappedBatchImporterConfigurationForNeo4jAdmin;
 import org.neo4j.gis.osm.importer.OSMInput;
 import org.neo4j.gis.osm.importer.PrintingImportLogicMonitor;
 import org.neo4j.io.fs.DefaultFileSystemAbstraction;
@@ -51,7 +52,12 @@ public class OSMImportTool {
         PrintStream out = System.out;
         PrintStream err = System.err;
         InputStream in = System.in;
-        Configuration config = DEFAULT;
+        Configuration config = new WrappedBatchImporterConfigurationForNeo4jAdmin(DEFAULT) {
+            @Override
+            public int maxNumberOfProcessors() {
+                return 1;
+            }
+        };
         storeDir.mkdirs();
         LifeSupport life = new LifeSupport();
         Config dbConfig = Config.defaults();
@@ -71,7 +77,7 @@ public class OSMImportTool {
                 dbConfig,
                 RecordFormatSelector.selectForConfig(dbConfig, logService.getInternalLogProvider()),
                 new PrintingImportLogicMonitor(out, err));
-        importer.doImport(new OSMInput(fs, osmFile, badCollector(new FileOutputStream("bad.log"), -1)));
+        importer.doImport(new OSMInput(fs, osmFile, config, badCollector(new FileOutputStream("bad.log"), -1)));
     }
 
 }
