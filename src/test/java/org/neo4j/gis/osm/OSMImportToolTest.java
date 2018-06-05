@@ -163,7 +163,11 @@ public class OSMImportToolTest {
     private void importAndAssert(String name, String[] files, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
         String[] args = new String[files.length + 3];
         for (int i = 0; i < files.length; i++) {
-            args[i + 3] = "samples/" + files[i] + ".osm";
+            try {
+                args[i + 3] = findOSMFile(files[i]).getCanonicalPath();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
         try {
             File storeDir = prepareStoreDir(name);
@@ -229,7 +233,7 @@ public class OSMImportToolTest {
         ).forEach(
                 (label, count) -> assertThat("Expected specific number of '" + label + "' nodes", countNodesWithLabel(db, label), equalTo(count))
         );
-        if(!ignoreRelationships) {
+        if (!ignoreRelationships) {
             map(
                     "TAGS", expectedOSMTags,
                     "FIRST_NODE", expectedOSMWays,
