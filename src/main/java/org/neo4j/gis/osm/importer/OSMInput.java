@@ -33,7 +33,7 @@ import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_POINT;
 import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_POLYGON;
 
 public class OSMInput implements Input {
-    private final File osmFile;
+    private final String[] osmFiles;
     private final Groups groups = new Groups();
     private final Group nodesGroup;
     private final Group waysGroup;
@@ -53,7 +53,7 @@ public class OSMInput implements Input {
 
     public OSMInput(FileSystemAbstraction fs, String[] osmFiles, Configuration config, Collector badCollector) {
         this.fs = fs;
-        this.osmFile = new File(osmFiles[0]);
+        this.osmFiles = osmFiles;
         this.config = config;
         this.badCollector = badCollector;
         nodesGroup = this.groups.getOrCreate("osm_nodes");
@@ -62,25 +62,6 @@ public class OSMInput implements Input {
         relationsGroup = this.groups.getOrCreate("osm_relations");
         tagsGroup = this.groups.getOrCreate("osm_tags");
         miscGroup = this.groups.getOrCreate("osm_misc");
-    }
-
-    private InputStream inputStream() throws IOException {
-        FileInputStream input = new FileInputStream(osmFile);
-        if (osmFile.getName().endsWith(".bz2")) {
-            return new BZip2CompressorInputStream(input);
-        } else {
-            return input;
-        }
-    }
-
-    private XMLStreamReader parser() {
-        try {
-            javax.xml.stream.XMLInputFactory factory = javax.xml.stream.XMLInputFactory.newInstance();
-            InputStreamReader reader = new InputStreamReader(inputStream(), Charset.defaultCharset());
-            return factory.createXMLStreamReader(reader);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to open XML: " + e.getMessage(), e);
-        }
     }
 
     public enum RoadDirection {
@@ -187,9 +168,9 @@ public class OSMInput implements Input {
 
     interface OSMInputChunk extends InputChunk {
 
-        void addDatasetNode(Map<String, Object> properties);
+        void addDatasetNode(String name, Map<String, Object> properties);
 
-        void addDatasetBoundsNode(Map<String, Object> properties);
+        void addDatasetBoundsNode(String name, Map<String, Object> properties);
 
         void addOSMNode(long id, Map<String, Object> properties);
 
@@ -209,14 +190,13 @@ public class OSMInput implements Input {
     }
 
     class OSMInputChunkFunctions {
-        OSMMisc dataset(Map<String, Object> properties) {
-            String name = osmFile.getName();
-            if (properties != null) properties.put("name", name);
+        OSMMisc dataset(String name, Map<String, Object> properties) {
+            if (properties != null && !properties.containsKey("name")) properties.put("name", name);
             return new OSMMisc("OSM", "osm_" + name, properties);
         }
 
-        OSMMisc bounds(Map<String, Object> properties) {
-            return new OSMMisc("Bounds", "bounds", properties);
+        OSMMisc bounds(String name, Map<String, Object> properties) {
+            return new OSMMisc("Bounds", "bounds_" + name, properties);
         }
 
         OSMWay way(long id, Map<String, Object> properties, Map<String, Object> wayTags, RoadDirection direction) {
@@ -244,13 +224,13 @@ public class OSMInput implements Input {
         }
 
         @Override
-        public void addDatasetNode(Map<String, Object> properties) {
-            addEvent(dataset(properties));
+        public void addDatasetNode(String name, Map<String, Object> properties) {
+            addEvent(dataset(name, properties));
         }
 
         @Override
-        public void addDatasetBoundsNode(Map<String, Object> properties) {
-            addEvent(bounds(properties));
+        public void addDatasetBoundsNode(String name, Map<String, Object> properties) {
+            addEvent(bounds(name, properties));
         }
 
         @Override
@@ -408,12 +388,12 @@ public class OSMInput implements Input {
         }
 
         @Override
-        public void addDatasetNode(Map<String, Object> properties) {
+        public void addDatasetNode(String name, Map<String, Object> properties) {
         }
 
         @Override
-        public void addDatasetBoundsNode(Map<String, Object> properties) {
-            addEvent(new OSMBoundsRel(dataset(null), bounds(properties)));
+        public void addDatasetBoundsNode(String name, Map<String, Object> properties) {
+            addEvent(new OSMBoundsRel(dataset(name, null), bounds(name, properties)));
         }
 
         @Override
@@ -581,6 +561,7 @@ public class OSMInput implements Input {
     private DateTimeFormatter timestampFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'");
 
     private abstract class OSMInputIterator implements InputIterator {
+        private final String osmFile;
         private final XMLStreamReader parser;
         private final ArrayList<Long> wayNodes = new ArrayList<>();
         private final ArrayList<Map<String, Object>> relationMembers = new ArrayList<>();
@@ -590,8 +571,9 @@ public class OSMInput implements Input {
         private ArrayList<String> currentXMLTags = new ArrayList<>();
         private Map<String, Object> currentNodeTags = new LinkedHashMap<>();
 
-        private OSMInputIterator(XMLStreamReader parser) {
-            this.parser = parser;
+        private OSMInputIterator(String osmFile) {
+            this.osmFile = osmFile;
+            this.parser = getXMLParser();
         }
 
         @Override
@@ -614,11 +596,11 @@ public class OSMInput implements Input {
                                     currentNodeTags.put(properties.get("k").toString(), properties.get("v").toString());
                                 } else if (currentXMLTags.get(0).equals("osm")) {
                                     if (currentXMLTags.size() == 1) {
-                                        events.addDatasetNode(extractProperties(parser));
+                                        events.addDatasetNode(osmFile, extractProperties(parser));
                                     } else if (currentXMLTags.size() > 1) {
                                         String tag = currentXMLTags.get(1);
                                         if (tag.equals("bounds")) {
-                                            events.addDatasetBoundsNode(extractProperties(parser));
+                                            events.addDatasetBoundsNode(osmFile, extractProperties(parser));
                                         } else if (tag.equals("node")) {
                                             // Create OSMNode object with all attributes (but not tags)
                                             // <node id="269682538" lat="56.0420950"
@@ -697,6 +679,25 @@ public class OSMInput implements Input {
             events.endTaggableEvent();
         }
 
+        private InputStream openFile() throws IOException {
+            FileInputStream input = new FileInputStream(osmFile);
+            if (osmFile.endsWith(".bz2")) {
+                return new BZip2CompressorInputStream(input);
+            } else {
+                return input;
+            }
+        }
+
+        private XMLStreamReader getXMLParser() {
+            try {
+                javax.xml.stream.XMLInputFactory factory = javax.xml.stream.XMLInputFactory.newInstance();
+                InputStreamReader reader = new InputStreamReader(openFile(), Charset.defaultCharset());
+                return factory.createXMLStreamReader(reader);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to open XML: " + e.getMessage(), e);
+            }
+        }
+
         @Override
         public void close() throws IOException {
             try {
@@ -707,9 +708,65 @@ public class OSMInput implements Input {
         }
     }
 
-    private class OSMNodesInputIterator extends OSMInputIterator {
-        private OSMNodesInputIterator(XMLStreamReader parser) {
-            super(parser);
+    private abstract class MultiFileInputIterator implements InputIterator {
+        private String[] osmFiles;
+        private int currentFileIndex;
+        private OSMInputIterator current;
+
+        private MultiFileInputIterator(String[] osmFiles) {
+            this.osmFiles = osmFiles;
+            this.currentFileIndex = 0;
+        }
+
+        @Override
+        public synchronized boolean next(InputChunk chunk) throws IOException {
+            while (true) {
+                if (current == null) {
+                    if (!hasNextFile()) {
+                        return false;
+                    }
+                    current = new OSMInputIterator(nextFile()) {
+                        @Override
+                        public InputChunk newChunk() {
+                            throw new IllegalStateException("Inner OSMInputIterator should never be called directly");
+                        }
+                    };
+                }
+
+                if (current.next(chunk)) {
+                    return true;
+                }
+                current.close();
+                current = null;
+            }
+        }
+
+        @Override
+        public void close() {
+            try {
+                if (current != null) {
+                    current.close();
+                }
+                current = null;
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+
+        private boolean hasNextFile() {
+            return this.currentFileIndex < osmFiles.length;
+        }
+
+        private String nextFile() {
+            String osmFile = osmFiles[currentFileIndex];
+            currentFileIndex++;
+            return osmFile;
+        }
+    }
+
+    private class OSMNodesInputIterator extends MultiFileInputIterator {
+        private OSMNodesInputIterator(String[] osmFiles) {
+            super(osmFiles);
         }
 
         @Override
@@ -718,9 +775,9 @@ public class OSMInput implements Input {
         }
     }
 
-    private class OSMRelationshipsInputIterator extends OSMInputIterator {
-        private OSMRelationshipsInputIterator(XMLStreamReader parser) {
-            super(parser);
+    private class OSMRelationshipsInputIterator extends MultiFileInputIterator {
+        private OSMRelationshipsInputIterator(String[] osmFiles) {
+            super(osmFiles);
         }
 
         @Override
@@ -730,11 +787,11 @@ public class OSMInput implements Input {
     }
 
     public InputIterable nodes() {
-        return InputIterable.replayable(() -> new OSMNodesInputIterator(parser()));
+        return InputIterable.replayable(() -> new OSMNodesInputIterator(osmFiles));
     }
 
     public InputIterable relationships() {
-        return InputIterable.replayable(() -> new OSMRelationshipsInputIterator(parser()));
+        return InputIterable.replayable(() -> new OSMRelationshipsInputIterator(osmFiles));
     }
 
     public IdMapper idMapper(NumberArrayFactory numberArrayFactory) {
@@ -748,12 +805,18 @@ public class OSMInput implements Input {
     private static final int BYTES_PER_NODE = 1000;
     private static final int BYTES_PER_REL = 10000;
 
-    private long calcFileSize(File osmFile) {
-        return FileUtils.size(fs, osmFile);
+    private long calcFileSize() {
+        long totalSize = 0;
+        for (String osmFile : osmFiles) {
+            long fileSize = FileUtils.size(fs, new File(osmFile));
+            if (osmFile.endsWith(".bz2")) fileSize *= 10;
+            totalSize += fileSize;
+        }
+        return totalSize;
     }
 
     public Estimates calculateEstimates(ToIntFunction<Value[]> toIntFunction) throws IOException {
-        long fileSize = calcFileSize(osmFile);
+        long fileSize = calcFileSize();
         return Inputs.knownEstimates(fileSize / BYTES_PER_NODE, fileSize / BYTES_PER_REL, 8, 1, 8, 8, 1);
     }
 

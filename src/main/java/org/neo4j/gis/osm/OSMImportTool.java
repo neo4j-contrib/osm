@@ -61,7 +61,7 @@ public class OSMImportTool {
         DB_NAME("database", null,
                 "<database-name>",
                 "Database name to import into. " + "Must not contain existing database.", true),
-        DELETE_DB("delete", Boolean.FALSE, ",true/false>",
+        DELETE_DB("delete", Boolean.FALSE, "<true/false>",
                 "Whether or not to delete the existing database before creating a new one."),
         INPUT_ENCODING("input-encoding", null,
                 "<character set>",

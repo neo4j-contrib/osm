@@ -26,7 +26,7 @@ import static org.neo4j.helpers.collection.MapUtil.map;
 public class OSMImportToolTest {
 
     @Test
-    public void testOneStreet() throws IOException {
+    public void testOneStreet() {
         importAndAssert("one-street", (db, stats) -> {
             stats.put("expectedOSMNodes", 8L);
             stats.put("expectedOSMWayNodes", 8L);
@@ -36,7 +36,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testOneWayStreet() throws IOException {
+    public void testOneWayStreet() {
         importAndAssert("one-way-forward", (db, stats) -> {
             stats.put("expectedOSMNodes", 4L);
             stats.put("expectedOSMWayNodes", 4L);
@@ -47,7 +47,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testOneWayStreetBackwards() throws IOException {
+    public void testOneWayStreetBackwards() {
         importAndAssert("one-way-backward", (db, stats) -> {
             stats.put("expectedOSMNodes", 4L);
             stats.put("expectedOSMWayNodes", 4L);
@@ -58,7 +58,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testTwoStreet() throws IOException {
+    public void testTwoStreet() {
         importAndAssert("two-street", (db, stats) -> {
             stats.put("expectedOSMNodes", 24L);
             stats.put("expectedOSMWayNodes", 24L);
@@ -68,7 +68,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testParking() throws IOException {
+    public void testParking() {
         importAndAssert("parking", (db, stats) -> {
             stats.put("expectedOSMNodes", 4L);
             stats.put("expectedOSMWayNodes", 4L);
@@ -78,7 +78,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testParkingAndStreets() throws IOException {
+    public void testParkingAndStreets() {
         importAndAssert("parking-and-streets", (db, stats) -> {
             stats.put("expectedOSMNodes", 17L);
             stats.put("expectedOSMWayNodes", 26L);
@@ -90,7 +90,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testOSM() throws IOException {
+    public void testOSM() {
         importAndAssert("map", (db, stats) -> {
             stats.put("expectedOSMNodes", 2334L);
             stats.put("nodesWithTags", 202L);
@@ -102,6 +102,32 @@ public class OSMImportToolTest {
         });
     }
 
+    @Test
+    public void testOSM2() {
+        importAndAssert("map2", (db, stats) -> {
+            stats.put("expectedOSMTags", 8796L);
+            stats.put("expectedOSMNodes", 43630L);
+            stats.put("expectedOSMWayNodes", 50703L);
+            stats.put("expectedOSMWays", 7023L);
+            stats.put("expectedOSMRelations", 115L);
+            stats.put("expectedOSMRelationMembers", 626L);
+            stats.put("expectedNextRels", 46903L);
+            assertOSMModel(db, stats);
+        });
+    }
+
+    @Test
+    public void testMultiOSM() {
+        importAndAssert("test", new String[]{"map", "map2"}, (db, stats) -> {
+            stats.put("expectedOSMTags", 9170L);
+            stats.put("expectedOSMNodes", 45964L);
+            stats.put("expectedOSMWayNodes", 53273L);
+            stats.put("expectedOSMWays", 7190L);
+            stats.put("expectedOSMRelations", 120L);
+            assertOSMModel(db, stats, true);    // merging OSM models currently duplicates relationships
+        });
+    }
+
     private File prepareStoreDir(String name) throws IOException {
         File storeDir = new File("target/databases/", name);
         FileUtils.deleteRecursively(storeDir);
@@ -109,13 +135,21 @@ public class OSMImportToolTest {
         return storeDir;
     }
 
+    private File findOSMFile(String name) {
+        for (String ext : new String[]{".osm.bz2", ".osm"}) {
+            File file = new File("samples/" + name + ext);
+            if (file.exists()) return file;
+        }
+        return null;
+    }
+
     private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
-        File osmFile = new File("samples/" + name + ".osm");
-        if (osmFile.exists()) {
+        File osmFile = findOSMFile(name);
+        if (osmFile != null) {
             try {
                 File storeDir = prepareStoreDir(name);
                 OSMImportTool.main(new String[]{"--into", storeDir.getCanonicalPath(), osmFile.getCanonicalPath()});
-                System.out.println("\nFinished importing " + osmFile + "- analysing database ...");
+                System.out.println("\nFinished importing " + osmFile + " - analysing database ...");
                 GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
                 Map<String, Long> stats = debugOSMModel(db);
                 assertions.accept(db, stats);
@@ -123,6 +157,27 @@ public class OSMImportToolTest {
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
+        }
+    }
+
+    private void importAndAssert(String name, String[] files, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
+        String[] args = new String[files.length + 3];
+        for (int i = 0; i < files.length; i++) {
+            args[i + 3] = "samples/" + files[i] + ".osm";
+        }
+        try {
+            File storeDir = prepareStoreDir(name);
+            args[0] = "--skip-duplicate-nodes";
+            args[1] = "--into";
+            args[2] = storeDir.getCanonicalPath();
+            OSMImportTool.main(args);
+            System.out.println("\nFinished importing " + Arrays.toString(files) + " into " + storeDir + " - analysing database ...");
+            GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
+            Map<String, Long> stats = debugOSMModel(db);
+            assertions.accept(db, stats);
+            db.shutdown();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -152,6 +207,10 @@ public class OSMImportToolTest {
     }
 
     private void assertOSMModel(GraphDatabaseService db, Map<String, Long> stats) {
+        assertOSMModel(db, stats, false);
+    }
+
+    private void assertOSMModel(GraphDatabaseService db, Map<String, Long> stats, boolean ignoreRelationships) {
         long expectedOSMNodes = getFromStats(stats, "expectedOSMNodes", 0);
         long expectedOSMWayNodes = getFromStats(stats, "expectedOSMWayNodes", expectedOSMNodes);
         long expectedOSMWays = getFromStats(stats, "expectedOSMWays", 0);
@@ -159,24 +218,28 @@ public class OSMImportToolTest {
         long expectedOSMRelationMembers = getFromStats(stats, "expectedOSMRelationMembers", 0);
         long nodesWithTags = getFromStats(stats, "nodesWithTags", 0);
         long closedWays = getFromStats(stats, "closedWays", 0);
+        long expectedOSMTags = getFromStats(stats, "expectedOSMTags", nodesWithTags + expectedOSMWays + expectedOSMRelations);
+        long expectedNextRels = getFromStats(stats, "expectedNextRels", expectedOSMWayNodes - expectedOSMWays + closedWays);
         map(
                 "OSMNode", expectedOSMNodes,
                 "OSMWay", expectedOSMWays,
                 "OSMRelation", expectedOSMRelations,
                 "OSMWayNode", expectedOSMWayNodes,
-                "OSMTags", nodesWithTags + expectedOSMWays + expectedOSMRelations
+                "OSMTags", expectedOSMTags
         ).forEach(
                 (label, count) -> assertThat("Expected specific number of '" + label + "' nodes", countNodesWithLabel(db, label), equalTo(count))
         );
-        map(
-                "TAGS", nodesWithTags + expectedOSMWays + expectedOSMRelations,
-                "FIRST_NODE", expectedOSMWays,
-                "NEXT", expectedOSMWayNodes - expectedOSMWays + closedWays,
-                "NODE", expectedOSMWayNodes,
-                "MEMBER", expectedOSMRelationMembers
-        ).forEach(
-                (type, count) -> assertThat("Expected specific number of '" + type + "' relationships", countRelationshipsWithType(db, type), equalTo(count))
-        );
+        if(!ignoreRelationships) {
+            map(
+                    "TAGS", expectedOSMTags,
+                    "FIRST_NODE", expectedOSMWays,
+                    "NEXT", expectedNextRels,
+                    "NODE", expectedOSMWayNodes,
+                    "MEMBER", expectedOSMRelationMembers
+            ).forEach(
+                    (type, count) -> assertThat("Expected specific number of '" + type + "' relationships", countRelationshipsWithType(db, type), equalTo(count))
+            );
+        }
     }
 
     private void assertOneWay(Node node, Direction direction, String[] forwardValues, String[] backwardValues) {
