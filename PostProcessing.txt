@@ -1,0 +1,34 @@
+Problems:
+=========
+
+Broken model:
+* Duplicate relationships
+* Disconnected ways (first node missing)
+
+Less optimal model:
+* No distance calculation on NEXT
+* Complex geometries
+
+Duplicate relationships
+-----------------------
+
+Custom BadCollector to note duplicate nodes and use this to search for duplicate relationships.
+
+Disconnected ways (first node missing)
+--------------------------------------
+
+Custom BadCollector to take note of duplicate ways, and then use that as a set to post-process looking for missing FIRST_NODE
+relationships and then searching for OSMWayNode's with same way_osm_id properties, and re-connecting the way.
+
+Taking note of CollectBadRelationships will also help find possible broken ways.
+
+No distance calculation on NEXT
+-------------------------------
+
+Post-processing. This can be calculated on demand as part of a query, but will be slow. Better to traverse all ways and fill
+in the distance on NEXT and the total distance on way tags or way properties.
+
+Complex geometries
+------------------
+
+Post processing.

@@ -138,6 +138,8 @@ public class OSMInput implements Input {
 
     private class OSMWayNode extends NodeEvent {
         private OSMWayNode(long wayId, long nodeId) {
+            // TODO: Save the wayId to the node to facilitate repair of partial way imports later (eg. first node not connected)
+            //super("OSMWayNode", "w" + wayId + "n" + nodeId, wayNodesGroup, Collections.singletonMap("way_osm_id", wayId));
             super("OSMWayNode", "w" + wayId + "n" + nodeId, wayNodesGroup);
         }
     }
