@@ -3,6 +3,7 @@ package org.neo4j.gis.osm;
 import org.neo4j.gis.osm.importer.OSMInput;
 import org.neo4j.gis.osm.importer.PrintingImportLogicMonitor;
 import org.neo4j.graphdb.factory.GraphDatabaseSettings;
+import org.neo4j.graphdb.spatial.Coordinate;
 import org.neo4j.helpers.Args;
 import org.neo4j.helpers.ArrayUtil;
 import org.neo4j.helpers.Exceptions;
@@ -19,6 +20,7 @@ import org.neo4j.kernel.impl.logging.StoreLogService;
 import org.neo4j.kernel.impl.scheduler.CentralJobScheduler;
 import org.neo4j.kernel.impl.store.format.RecordFormatSelector;
 import org.neo4j.kernel.impl.util.Converters;
+import org.neo4j.kernel.impl.util.Validator;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.internal.Version;
 import org.neo4j.kernel.lifecycle.LifeSupport;
@@ -32,11 +34,15 @@ import org.neo4j.unsafe.impl.batchimport.input.InputException;
 import org.neo4j.unsafe.impl.batchimport.staging.ExecutionMonitor;
 import org.neo4j.unsafe.impl.batchimport.staging.ExecutionMonitors;
 import org.neo4j.unsafe.impl.batchimport.staging.SpectrumExecutionMonitor;
+import org.w3c.dom.ranges.Range;
 
 import java.io.*;
 import java.nio.charset.Charset;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
 
 import static java.nio.charset.Charset.defaultCharset;
 import static org.neo4j.graphdb.factory.GraphDatabaseSettings.logs_directory;
@@ -95,6 +101,10 @@ public class OSMImportTool {
                         + "Skipped nodes will be logged"
                         + ", containing at most number of entites specified by " + BAD_TOLERANCE.key() + ", unless "
                         + "otherwise specified by " + SKIP_BAD_ENTRIES_LOGGING.key() + " option."),
+        RANGE("range", null,
+                "<minx,miny,maxx,maxy>",
+                "Optional filter for including only points within the specified range"
+                ),
         SKIP_DUPLICATE_NODES("skip-duplicate-nodes", Boolean.FALSE,
                 "<true/false>",
                 "Whether or not to skip importing nodes that have the same id/group. In the event of multiple "
@@ -254,6 +264,7 @@ public class OSMImportTool {
                 badFile = new File(storeDir, BAD_FILE_NAME);
                 badOutput = new BufferedOutputStream(fs.openAsOutputStream(badFile, false));
             }
+            OSMRange range = args.interpretOption(Options.RANGE.key(), Converters.optional(), toRange(), RANGE_IS_VALID);
             osmFiles = args.orphansAsArray();
             if (osmFiles.length == 0) {
                 throw new IllegalArgumentException("No OSM files specified");
@@ -277,15 +288,62 @@ public class OSMImportTool {
             configuration = importConfiguration(processors, defaultSettingsSuitableForTests, dbConfig, maxMemory, storeDir, allowCacheOnHeap, defaultHighIO);
             in = defaultSettingsSuitableForTests ? new ByteArrayInputStream(EMPTY_BYTE_ARRAY) : System.in;
             boolean detailedProgress = args.getBoolean(Options.DETAILED_PROGRESS.key(), (Boolean) Options.DETAILED_PROGRESS.defaultValue());
-            doImport(out, err, in, storeDir, logsDir, badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress);
+            doImport(out, err, in, storeDir, logsDir, badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress, range);
         }
     }
 
-    public static void doImport(PrintStream out, PrintStream err, InputStream in, File storeDir, File logsDir, File badFile,
+    static class OSMRange implements OSMInput.RangeFilter {
+        double[] range = new double[4];
+        ArrayList<String> errors = new ArrayList<>();
+
+        OSMRange(String rangeSpec) {
+            if (rangeSpec == null) {
+                errors.add("Range was null");
+            } else {
+                String[] fields = rangeSpec.split("\\s*[\\,\\;]\\s*");
+                if (fields.length == 4) {
+                    for (int i = 0; i < range.length; i++) {
+                        try {
+                            range[i] = Double.parseDouble(fields[i]);
+                        } catch (Exception e) {
+                            errors.add("Failed to parse double from field[" + i + "]: '" + fields[i] + "'");
+                        }
+                    }
+                } else {
+                    errors.add("Did not have exactly four fields in '" + rangeSpec + "'");
+                }
+            }
+        }
+
+        public boolean withinRange(double[] coordinate) {
+            return coordinate[0] >= range[0] && coordinate[1] >= range[1] && coordinate[0] <= range[2] && coordinate[1] <= range[3];
+        }
+
+        boolean isValid() {
+            return errors.size() == 0;
+        }
+
+        String error() {
+            return Arrays.toString(errors.toArray());
+        }
+    }
+
+    public static Function<String,OSMRange> toRange()
+    {
+        return OSMRange::new;
+    }
+
+    public static final Validator<OSMRange> RANGE_IS_VALID = value -> {
+        if (!value.isValid()) {
+            throw new IllegalArgumentException("Range '" + value + "' is not valid: " + value.error());
+        }
+    };
+
+    public static void doImport( PrintStream out, PrintStream err, InputStream in, File storeDir, File logsDir, File badFile,
                                 FileSystemAbstraction fs, String[] osmFiles,
                                 boolean enableStacktrace,
                                 Config dbConfig, OutputStream badOutput,
-                                Collector badCollector, Configuration configuration, boolean detailedProgress) throws IOException {
+                                Collector badCollector, Configuration configuration, boolean detailedProgress, OSMRange range) throws IOException {
         boolean success;
         LifeSupport life = new LifeSupport();
 
@@ -310,7 +368,7 @@ public class OSMImportTool {
         printOverview(storeDir, osmFiles, configuration, out);
         success = false;
         try {
-            importer.doImport(new OSMInput(fs, osmFiles, configuration, badCollector));
+            importer.doImport(new OSMInput(fs, osmFiles, configuration, badCollector, range));
             success = true;
         } catch (Exception e) {
             throw andPrintError("Import error", e, enableStacktrace, err);

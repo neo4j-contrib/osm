@@ -22,3 +22,35 @@ and importer with the following characteristics:
 * Possible to use without 'Neo4j Spatial' (ie. can be used on Neo4j 3.4 built-in spatial index).
 * Can replace the older OSMImporter in Neo4j Spatial (ie. should work with Neo4j Spatial also).
 * Wider range of use cases, including routing
+
+## Building
+
+This is a maven project so it can be built using:
+
+    mvn clean install
+
+This will run all tests which involves importing some OSM files. If you want to skip that:
+
+    mvn clean install -DskipTests
+
+The build will produce the jar `target/osm-1.0-SNAPSHOT.jar` and copy it to the local maven repository.
+
+## Running
+
+To run with the jar at `target/osm-1.0-SNAPSHOT.jar`:
+
+    java -Xms1280m -Xmx1280m
+      -cp "target/osm-1.0-SNAPSHOT.jar:target/dependency/*" org.neo4j.gis.osm.OSMImportTool \
+      --skip-duplicate-nodes --delete --into target/databases/map2 samples/map2.osm.bz2
+
+This will import the `samples/map2.osm.bz2` file into the database at `target/databases/map2`.
+You can pass more than one file on the command-line to import multiple files into the same database.
+
+There are many available command-line options inherited from the `neo4j-import` tool on which this was based.
+Run with the `--help` option to see the complete list.
+
+The values you pass to the JVM memory settings should be based on the needs of the files being imported.
+For very large files, use a high fraction of available machine memory. The example values above `-Xms1280m -Xmx1280m`
+were sufficient to import all of Scandinavia: Sweden, Finland, Iceland, Norway and Denmark, which combined had BZ2 files of 1.5GB.
+
+The entire US North-East has a BZ2 file of about 1.2G and so should import with similar settings.

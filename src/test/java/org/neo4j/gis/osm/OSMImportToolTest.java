@@ -155,6 +155,8 @@ public class OSMImportToolTest {
                 assertions.accept(db, stats);
                 db.shutdown();
             } catch (Exception e) {
+                System.err.println(e);
+                e.printStackTrace(System.err);
                 throw new RuntimeException(e);
             }
         }

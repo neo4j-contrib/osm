@@ -9,6 +9,8 @@ import java.util.*;
 import java.util.function.ToIntFunction;
 
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
+import org.apache.lucene.queryparser.xml.builders.RangeFilterBuilder;
+import org.neo4j.gis.osm.OSMImportTool;
 import org.neo4j.graphdb.spatial.CRS;
 import org.neo4j.graphdb.spatial.Coordinate;
 import org.neo4j.graphdb.spatial.Point;
@@ -21,9 +23,8 @@ import org.neo4j.unsafe.impl.batchimport.cache.NumberArrayFactory;
 import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMapper;
 import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMappers;
 import org.neo4j.unsafe.impl.batchimport.input.*;
-import org.neo4j.values.storable.CRSCalculator;
-import org.neo4j.values.storable.CoordinateReferenceSystem;
-import org.neo4j.values.storable.Value;
+import org.neo4j.values.storable.*;
+import org.w3c.dom.ranges.Range;
 
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
@@ -42,6 +43,7 @@ public class OSMInput implements Input {
     private final Group tagsGroup;
     private final Group miscGroup;
     private final Collector badCollector;
+    private final RangeFilter range;
     private final FileSystemAbstraction fs;
 
     // This uses an internal API of Neo4j, which could be a compatibility issue moving forward
@@ -51,11 +53,12 @@ public class OSMInput implements Input {
     private final CRSCalculator calculator = wgs84.getCalculator();
     private final Configuration config;
 
-    public OSMInput(FileSystemAbstraction fs, String[] osmFiles, Configuration config, Collector badCollector) {
+    public OSMInput(FileSystemAbstraction fs, String[] osmFiles, Configuration config, Collector badCollector, RangeFilter range) {
         this.fs = fs;
         this.osmFiles = osmFiles;
         this.config = config;
         this.badCollector = badCollector;
+        this.range = range;
         nodesGroup = this.groups.getOrCreate("osm_nodes");
         waysGroup = this.groups.getOrCreate("osm_ways");
         wayNodesGroup = this.groups.getOrCreate("osm_way_nodes");
@@ -609,7 +612,7 @@ public class OSMInput implements Input {
                                             // lon="12.9693483" user="sanna" uid="31450"
                                             // visible="true" version="1" changeset="133823"
                                             // timestamp="2008-06-11T12:36:28Z"/>
-                                            Map<String, Object> nodeProperties = extractProperties("node", parser);
+                                            Map<String, Object> nodeProperties = extractProperties("node", parser, range);
                                             long osm_id = Long.parseLong(nodeProperties.get("node_osm_id").toString());
                                             events.addOSMNode(osm_id, nodeProperties);
                                         } else if (tag.equals("way")) {
@@ -826,8 +829,11 @@ public class OSMInput implements Input {
         return extractProperties(null, parser);
     }
 
-    private Map<String, Object> extractProperties(String name,
-                                                  XMLStreamReader parser) {
+    private Map<String, Object> extractProperties(String name, XMLStreamReader parser) {
+        return extractProperties(name, parser, null);
+    }
+
+    private Map<String, Object> extractProperties(String name, XMLStreamReader parser, RangeFilter range) {
         // <node id="269682538" lat="56.0420950" lon="12.9693483" user="sanna"
         // uid="31450" visible="true" version="1" changeset="133823"
         // timestamp="2008-06-11T12:36:28Z"/>
@@ -861,20 +867,19 @@ public class OSMInput implements Input {
             }
         }
         if (properties.containsKey("lat") && properties.containsKey("lon")) {
-            Coordinate coord = new Coordinate((double) properties.get("lon"), (double) properties.get("lat"));
-            properties.put("location", new Point() {
-                @Override
-                public List<Coordinate> getCoordinates() {
-                    return Collections.singletonList(coord);
-                }
-
-                @Override
-                public CRS getCRS() {
-                    return wgs84;
-                }
-            });
+            PointValue point = Values.pointValue(wgs84, (double) properties.get("lon"), (double) properties.get("lat"));
+            if (range == null || range.withinRange(point.coordinate())) {
+                properties.put("location", point);
+            } else {
+                //Nodes outside the filtered location should be completely ignored
+                return null;
+            }
         }
         return properties;
+    }
+
+    public interface RangeFilter {
+        boolean withinRange(double[] coordinate);
     }
 
     private void error(String message) {
