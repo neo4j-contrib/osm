@@ -1,4 +1,4 @@
-package org.neo4j.gis.osm;
+package org.neo4j.gis.osm.model;
 
 import org.neo4j.graphdb.*;
 import org.neo4j.graphdb.spatial.Point;
@@ -20,6 +20,7 @@ public class OSMModel {
     public static final RelationshipType NODE = RelationshipType.withName("NODE");
     public static final RelationshipType ROUTE = RelationshipType.withName("ROUTE");
     public static final Label Routable = Label.label("Routable");
+    public static final Label Intersection = Label.label("Intersection");
     public static final Label OSMWay = Label.label("OSMWay");
     public static final Label OSMWayNode = Label.label("OSMWayNode");
     public static final Label OSMNode = Label.label("OSMNode");
@@ -41,6 +42,10 @@ public class OSMModel {
 
     public ClosestWay closestWay(LocatedNode poi) {
         return new ClosestWay(poi);
+    }
+
+    public IntersectionRoute intersectionRoute(Node osmNode, Relationship relToStartWayNode, Node startOsmWayNode) {
+        return new IntersectionRoute(osmNode, relToStartWayNode, startOsmWayNode);
     }
 
     public class LocatedNode {
@@ -86,6 +91,7 @@ public class OSMModel {
         String name;
         Node wayNode;
         Node tagsNode;
+        public ArrayList<Node> wayNodes;
         public ArrayList<LocatedNode> nodes;
         HashMap<Long, LocatedNode> seenNodes;
         DistanceResult closest;
@@ -95,6 +101,7 @@ public class OSMModel {
             this.tagsNode = wayNode.getSingleRelationship(TAGS, Direction.OUTGOING).getEndNode();
             if (wayNode.hasProperty("name")) name = wayNode.getProperty("name").toString();
             else if (tagsNode.hasProperty("name")) name = tagsNode.getProperty("name").toString();
+            this.wayNodes = new ArrayList<>();
             this.nodes = new ArrayList<>();
             this.seenNodes = new HashMap<>();
             Node firstNode = wayNode.getSingleRelationship(FIRST_NODE, Direction.OUTGOING).getEndNode();
@@ -109,6 +116,7 @@ public class OSMModel {
                     node = new LocatedNode(osmNode);
                     this.seenNodes.put(osmNode.getId(), node);
                 }
+                this.wayNodes.add(endNode);
                 this.nodes.add(node);
             }
         }
@@ -123,6 +131,17 @@ public class OSMModel {
         }
 
         public DistanceResult getClosest() {
+            if (closest == null) {
+                throw new IllegalStateException("No closest node found - was 'closestDistance' really called?");
+            }
+            return closest;
+        }
+
+        public DistanceResult getClosest(LocatedNode poi) {
+            if (closest == null) {
+                System.out.println("No closest way set - was 'closestDistance' really called?");
+                closest = closestDistanceTo(poi);
+            }
             return closest;
         }
 
@@ -171,7 +190,7 @@ public class OSMModel {
                     if (nodes.size() > 1) {
                         return getLocationMaker(0, 1);
                     } else {
-                        return new LocationExists(nodes.get(0).node);
+                        return new LocationExists(node.node, nodes.get(0).node, distance);
                     }
                 }
                 if (closestNodeIndex == nodes.size() - 1) {
@@ -192,33 +211,42 @@ public class OSMModel {
                 LocatedNode right = nodes.get(rightIndex);
                 Triangle triangle = new Triangle(node.point, left.point, right.point);
                 if (triangle.leftAngle() > 85.0) {
-                    return new LocationExists(left.node);
+                    return new LocationExists(node.node, left.node, calculator.distance(node.point, left.point));
                 } else if (triangle.rightAngle() > 85.0) {
-                    return new LocationExists(right.node);
-                } else if(triangle.apexAngle() > 175) {
-                    return new LocationIsPoint(left.node, right.node, node.node);
+                    return new LocationExists(node.node, right.node, calculator.distance(node.point, right.point));
+                } else if (triangle.apexAngle() > 175) {
+                    return new LocationIsPoint(node.node,
+                            left.node, calculator.distance(left.point, node.point),
+                            right.node, calculator.distance(left.point, node.point));
                 } else {
                     PointValue projected = triangle.project();
-                    return new LocationInterpolated(left.node, right.node, projected, node.node);
+                    return new LocationInterpolated(calculator, node, projected, left, right);
                 }
             }
         }
     }
 
     public interface LocationMaker {
-        public abstract Node process(GraphDatabaseService db);
+        Node process(GraphDatabaseService db);
     }
 
     public static class LocationExists implements LocationMaker {
         Node node;
+        Node poi;
+        double distance;
 
-        private LocationExists(Node node) {
+        private LocationExists(Node poi, Node node, double distance) {
             this.node = node;
+            this.poi = poi;
+            this.distance = distance;
         }
 
         public Node process(GraphDatabaseService db) {
+            System.out.println("\t\tConnecting existing node: " + node);
             try (Transaction tx = db.beginTx()) {
                 node.addLabel(Routable);
+                Relationship rel = poi.createRelationshipTo(node, ROUTE);
+                rel.setProperty("distance", this.distance);
                 tx.success();
             }
             return node;
@@ -231,31 +259,39 @@ public class OSMModel {
      * to that, and that to the street nodes in the routable graph.
      */
     public static class LocationInterpolated implements LocationMaker {
-        public Node left;
-        public Node right;
+        public LocatedNode left;
+        public LocatedNode right;
         public PointValue point;
-        public Node poi;
+        public LocatedNode poi;
+        private CRSCalculator calculator;
 
-        private LocationInterpolated(Node left, Node right, PointValue point, Node poi) {
+        private LocationInterpolated(CRSCalculator calculator, LocatedNode poi, PointValue point, LocatedNode left, LocatedNode right) {
             this.left = left;
             this.right = right;
             this.point = point;
             this.poi = poi;
+            this.calculator = calculator;
         }
 
         public Node process(GraphDatabaseService db) {
             Node node;
             try (Transaction tx = db.beginTx()) {
-                left.addLabel(Routable);
-                right.addLabel(Routable);
+                left.node.addLabel(Routable);
+                right.node.addLabel(Routable);
                 node = db.createNode(Routable);
                 node.setProperty("location", point);
-                node.createRelationshipTo(left, ROUTE);
-                node.createRelationshipTo(right, ROUTE);
-                poi.createRelationshipTo(node, ROUTE);
+                createConnection(node, left.node, calculator.distance(point, left.point));
+                createConnection(node, right.node, calculator.distance(point, right.point));
+                createConnection(poi.node, node, calculator.distance(point, poi.point));
                 tx.success();
             }
+            System.out.println("\t\tCreating interpolated node: " + node);
             return node;
+        }
+
+        private void createConnection(Node a, Node b, double distance) {
+            Relationship rel = a.createRelationshipTo(b, ROUTE);
+            rel.setProperty("distance", distance);
         }
     }
 
@@ -267,20 +303,27 @@ public class OSMModel {
         public Node left;
         public Node right;
         public Node node;
+        public double leftDist;
+        public double rightDist;
 
-        private LocationIsPoint(Node left, Node right, Node node) {
+        private LocationIsPoint(Node node, Node left, double leftDist, Node right, double rightDist) {
             this.left = left;
             this.right = right;
             this.node = node;
+            this.leftDist = leftDist;
+            this.rightDist = rightDist;
         }
 
         public Node process(GraphDatabaseService db) {
+            System.out.println("\t\tLinking point of interest node: " + node);
             try (Transaction tx = db.beginTx()) {
                 left.addLabel(Routable);
                 right.addLabel(Routable);
                 node.addLabel(Routable);
-                node.createRelationshipTo(left, ROUTE);
-                node.createRelationshipTo(right, ROUTE);
+                Relationship leftRel = node.createRelationshipTo(left, ROUTE);
+                leftRel.setProperty("distance", leftDist);
+                Relationship rightRel = node.createRelationshipTo(right, ROUTE);
+                rightRel.setProperty("distance", rightDist);
                 tx.success();
             }
             return node;
@@ -359,6 +402,198 @@ public class OSMModel {
                 coordinates[i] += rightFactor * right.coordinate()[i];
             }
             return Values.pointValue(apex.getCoordinateReferenceSystem(), coordinates);
+        }
+    }
+
+    public static class IntersectionRoute {
+        public Node fromNode;
+        public Node wayNode;
+        public Node toNode;
+        public double distance;
+        public Relationship fromRel;
+        public Relationship toRel;
+
+        public IntersectionRoute(Node node, Relationship wayNodeRel, Node wayNode) {
+            this.fromNode = node;
+            this.fromRel = wayNodeRel;
+            this.wayNode = wayNode;
+            this.toNode = null;
+            this.toRel = null;
+            this.distance = 0;
+        }
+
+        @Override
+        public String toString() {
+            return "IntersectionRoute:from(" + fromNode + ")via(" + wayNode + ")to(" + toNode + ")";
+        }
+
+        public boolean process(GraphDatabaseService db) {
+            System.out.println("Searching for route from OSMNode:" + fromNode + " via OSMWayNode:" + wayNode);
+            this.distance = 0;
+            PathSegment pathSegment = findIntersection(db, wayNode);
+            if (pathSegment == null || pathSegment.lastSegment().osmNode == null) {
+                this.distance = 0;
+                return false;
+            } else {
+                this.toNode = pathSegment.lastSegment().osmNode;
+                this.toRel = pathSegment.lastRel();
+                this.distance = pathSegment.totalDistance();
+                return true;
+            }
+        }
+
+        public ArrayList<Relationship> getExistingRoutes() {
+            ArrayList<Relationship> existingRoutes = new ArrayList<>();
+            for (Relationship rel : this.fromNode.getRelationships(OSMModel.ROUTE, Direction.BOTH)) {
+                if (rel.getOtherNode(fromNode).equals(this.toNode)) {
+                    existingRoutes.add(rel);
+                }
+            }
+            return existingRoutes;
+        }
+
+        public Relationship mergeRouteRelationship() {
+            ArrayList<Relationship> toDelete = new ArrayList<>();
+            for (Relationship rel : this.fromNode.getRelationships(OSMModel.ROUTE, Direction.BOTH)) {
+                if (rel.getOtherNode(fromNode).equals(this.toNode)) {
+                    if (getRelIdFromProperty(rel, "fromRel") == fromRel.getId() && getRelIdFromProperty(rel, "toRel") == toRel.getId()) {
+                        toDelete.add(rel);
+                    }
+                }
+            }
+            toDelete.forEach(Relationship::delete);
+            Relationship rel = fromNode.createRelationshipTo(toNode, OSMModel.ROUTE);
+            rel.setProperty("fromRel", fromRel.getId());
+            rel.setProperty("toRel", toRel.getId());
+            return rel;
+        }
+
+        private long getRelIdFromProperty(Relationship rel, String property) {
+            if (rel.hasProperty(property)) {
+                return (Long) rel.getProperty(property);
+            } else {
+                return -1;
+            }
+        }
+
+        static class PathSegment {
+            Node fromWayNode;
+            Node toWayNode;
+            Relationship lastRel;
+            Node osmNode;
+            double distance;
+            int length;
+            PathSegment nextSegment;
+
+            PathSegment(Node fromWayNode) {
+                this.fromWayNode = fromWayNode;
+                this.toWayNode = null;
+                this.osmNode = null;
+                this.distance = 0;
+                this.length = 0;
+                this.nextSegment = null;
+            }
+
+            double totalDistance() {
+                return distance + ((nextSegment != null) ? nextSegment.totalDistance() : 0);
+            }
+
+            double totalLength() {
+                return length + ((nextSegment != null) ? nextSegment.totalLength() : 0);
+            }
+
+            Relationship lastRel() {
+                return lastSegment().lastRel;
+            }
+
+            PathSegment lastSegment() {
+                return (nextSegment == null) ? this : nextSegment.lastSegment();
+            }
+
+            boolean process(GraphDatabaseService db) {
+                toWayNode = findLastWayNode(db, Direction.OUTGOING);
+                if (toWayNode == null) {
+                    toWayNode = findLastWayNode(db, Direction.INCOMING);
+                }
+                if (toWayNode != null) {
+                    lastRel = toWayNode.getSingleRelationship(OSMModel.NODE, Direction.OUTGOING);
+                    osmNode = lastRel.getEndNode();
+                    return osmNode != null;
+                } else {
+                    return false;
+                }
+            }
+
+            Node findLastWayNode(GraphDatabaseService db, Direction direction) {
+                this.distance = 0;
+                this.length = 0;
+                Node lastNode = null;
+                TraversalDescription traversalDescription = db.traversalDescription().depthFirst().relationships(OSMModel.NEXT, direction);
+                for (Path path : traversalDescription.traverse(fromWayNode)) {
+                    if (path.length() > 0) {
+                        lastNode = path.endNode();
+                        Relationship rel = path.lastRelationship();
+                        if (rel.hasProperty("distance")) {
+                            distance += (double) rel.getProperty("distance");
+                            length++;
+                        } else {
+                            System.out.println("spatial.osm.routeIntersection(): Missing 'distance' on " + rel);
+                            return null;
+                        }
+                    }
+                }
+                if (lastNode == null) {
+                    System.out.println("spatial.osm.routeIntersection(): No " + direction + " path found from OSMWayNode(" + fromWayNode + ")");
+                    return null;
+                } else {
+                    return lastNode;
+                }
+            }
+
+            ArrayList<Relationship> nextWayRels() {
+                ArrayList<Relationship> relationships = new ArrayList<>();
+                if (osmNode != null) {
+                    for (Relationship rel : osmNode.getRelationships(OSMModel.NODE, Direction.INCOMING)) {
+                        if (!rel.equals(lastRel)) {
+                            relationships.add(rel);
+                        }
+                    }
+                }
+                return relationships;
+            }
+
+            public String toString() {
+                return "PathSegment[from:" + fromWayNode + ", to:" + toWayNode + ", length:" + length + ", distance:" + distance + "]" + (nextSegment == null ? "" : ".." + nextSegment);
+            }
+        }
+
+        private PathSegment findIntersection(GraphDatabaseService db, Node startNode) {
+            PathSegment pathSegment = new PathSegment(startNode);
+            if (pathSegment.process(db)) {
+                if (pathSegment.osmNode.hasLabel(OSMModel.Intersection)) {
+                    System.out.println("\tFound labeled intersection: " + pathSegment.osmNode);
+                    return pathSegment;
+                } else {
+                    ArrayList<Relationship> rels = pathSegment.nextWayRels();
+                    if (rels.size() > 1) {
+                        // Not a chain, but an intersection, let's stop here
+                        System.out.println("\tFound unlabeled intersection: " + pathSegment.osmNode);
+                        pathSegment.osmNode.addLabel(OSMModel.Intersection);
+                        return pathSegment;
+                    } else if (rels.size() == 1) {
+                        // This is a connection in a chain, keep looking
+                        System.out.println("\tFound chain link at " + pathSegment.osmNode + ", searching further...");
+                        Node nextWayNode = rels.get(0).getStartNode();
+                        pathSegment.nextSegment = findIntersection(db, nextWayNode);
+                        return pathSegment;
+                    } else {
+                        // the end of a chain?
+                        return null;
+                    }
+                }
+            } else {
+                return null;
+            }
         }
     }
 }

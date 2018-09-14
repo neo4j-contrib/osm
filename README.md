@@ -37,6 +37,10 @@ The build will produce the jar `target/osm-1.0-SNAPSHOT.jar` and copy it to the 
 
 ## Running
 
+Get all dependencies together:
+
+    mvn dependency:copy-dependencies
+
 To run with the jar at `target/osm-1.0-SNAPSHOT.jar`:
 
     java -Xms1280m -Xmx1280m

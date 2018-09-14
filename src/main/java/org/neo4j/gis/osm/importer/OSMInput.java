@@ -9,11 +9,7 @@ import java.util.*;
 import java.util.function.ToIntFunction;
 
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
-import org.apache.lucene.queryparser.xml.builders.RangeFilterBuilder;
-import org.neo4j.gis.osm.OSMImportTool;
-import org.neo4j.graphdb.spatial.CRS;
-import org.neo4j.graphdb.spatial.Coordinate;
-import org.neo4j.graphdb.spatial.Point;
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.fs.FileUtils;
 import org.neo4j.unsafe.impl.batchimport.Configuration;
@@ -24,7 +20,6 @@ import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMapper;
 import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMappers;
 import org.neo4j.unsafe.impl.batchimport.input.*;
 import org.neo4j.values.storable.*;
-import org.w3c.dom.ranges.Range;
 
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
@@ -688,6 +683,8 @@ public class OSMInput implements Input {
             FileInputStream input = new FileInputStream(osmFile);
             if (osmFile.endsWith(".bz2")) {
                 return new BZip2CompressorInputStream(input);
+            }else if (osmFile.endsWith(".gz")) {
+                return new GzipCompressorInputStream(input);
             } else {
                 return input;
             }
@@ -814,7 +811,7 @@ public class OSMInput implements Input {
         long totalSize = 0;
         for (String osmFile : osmFiles) {
             long fileSize = FileUtils.size(fs, new File(osmFile));
-            if (osmFile.endsWith(".bz2")) fileSize *= 10;
+            if (osmFile.endsWith(".bz2") || osmFile.endsWith(".gz")) fileSize *= 10;
             totalSize += fileSize;
         }
         return totalSize;
