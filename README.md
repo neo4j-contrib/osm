@@ -58,3 +58,69 @@ For very large files, use a high fraction of available machine memory. The examp
 were sufficient to import all of Scandinavia: Sweden, Finland, Iceland, Norway and Denmark, which combined had BZ2 files of 1.5GB.
 
 The entire US North-East has a BZ2 file of about 1.2G and so should import with similar settings.
+
+## Procedures
+
+To help build graphs that can be used for routing, two procedures have been added:
+
+* `spatial.osm.routeIntersection(node,false,false,false)`
+* `spatial.osm.routePointOfInterest(node,ways)`
+
+### Creating a routing graph of intersections
+
+First identify nodes that are interestions where a driver can make a choice:
+
+    MATCH (n:OSMNode)
+      WHERE size((n)<-[:NODE]-()) > 2
+      AND NOT (n:Intersection)
+    WITH n LIMIT 100
+    MATCH (n)<-[:NODE]-(wn:OSMWayNode), (wn)<-[:NEXT*0..100]-(wx),
+          (wx)<-[:FIRST_NODE]-(w:OSMWay)-[:TAGS]->(wt:OSMTags)
+      WHERE exists(wt.highway)
+    SET n:Intersection
+    RETURN count(*);
+
+Then create a routing graph of `:ROUTE` relationships between the `:Intersection` nodes:
+
+    MATCH (x:Intersection) WITH x LIMIT 100
+      CALL spatial.osm.routeIntersection(x,false,false,false)
+      YIELD fromNode, toNode, fromRel, toRel, distance, length, count
+    WITH fromNode, toNode, fromRel, toRel, distance, length, count
+    MERGE (fromNode)-[r:ROUTE {fromRel:id(fromRel),toRel:id(toRel)}]->(toNode)
+      ON CREATE SET r.distance = distance, r.length = length, r.count = count
+    RETURN count(*);
+
+### Find points of interest and add to the routing graph
+
+Using a selection of tags appropriate for your app, find nodes that are points of interest and connect them to the graph:
+
+```
+UNWIND ["restaurant","fast_food","cafe","bar","pub","ice_cream","cinema"] AS amenity
+MATCH (x:OSMNode)-[:TAGS]->(t:OSMTags)
+  WHERE t.amenity = amenity AND NOT (x)-[:ROUTE]->()
+WITH x, x.location as poi LIMIT 100
+MATCH (n:OSMNode)
+  WHERE distance(poi, n.location) < 100
+WITH x, n
+MATCH (n)<-[:NODE]-(wn:OSMWayNode), (wn)<-[:NEXT*0..10]-(wx),
+      (wx)<-[:FIRST_NODE]-(w:OSMWay)-[:TAGS]->(wt:OSMTags)
+WITH x, w, wt
+  WHERE exists(wt.highway)
+WITH x, collect(w) as ways
+  CALL spatial.osm.routePointOfInterest(x,ways) YIELD node
+  SET x:PointOfInterest
+RETURN count(node);
+```
+
+Link the points of interest sub-graph into the routing sub-graph:
+
+    MATCH (x:Routable:OSMNode)
+      WHERE NOT (x)-[:ROUTE]->(:Intersection) WITH x LIMIT 100
+    CALL spatial.osm.routeIntersection(x,true,false,false)
+      YIELD fromNode, toNode, fromRel, toRel, distance, length, count
+    WITH fromNode, toNode, fromRel, toRel, distance, length, count
+    MERGE (fromNode)-[r:ROUTE {fromRel:id(fromRel),toRel:id(toRel)}]->(toNode)
+      ON CREATE SET r.distance = distance, r.length = length, r.count = count
+    RETURN count(*);
+
+    
