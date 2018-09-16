@@ -37,12 +37,12 @@ public class OSMProcedures {
     }
 
     @Procedure(value = "spatial.osm.routeIntersection", mode = Mode.WRITE)
-    public Stream<IntersectionRouteResult> findStreetRoute(@Name("OSMNode") Node node, @Name("deleteExistingRoutes") boolean deleteExistingRoutes, @Name("createNewRoutes") boolean createNewRoutes) throws ProcedureException {
+    public Stream<IntersectionRouteResult> findStreetRoute(@Name("OSMNode") Node node, @Name("deleteExistingRoutes") boolean deleteExistingRoutes, @Name("createNewRoutes") boolean createNewRoutes, @Name("addLabels") boolean addLabels) throws ProcedureException {
         try {
             OSMModel osm = new OSMModel(db);
             ArrayList<OSMModel.IntersectionRoute> routesToSearch = new ArrayList<>();
             for (Relationship rel : node.getRelationships(OSMModel.NODE, Direction.INCOMING)) {
-                routesToSearch.add(osm.intersectionRoute(node, rel, rel.getStartNode()));
+                routesToSearch.add(osm.intersectionRoute(node, rel, rel.getStartNode(), addLabels));
             }
             ArrayList<IntersectionRouteResult> routesFound = new ArrayList<>();
             Collections.reverse(routesToSearch);
@@ -76,6 +76,8 @@ public class OSMProcedures {
         public Node wayNode;
         public Node toNode;
         public double distance;
+        public long length;
+        public long count;
         public Relationship fromRel;
         public Relationship toRel;
 
@@ -86,6 +88,8 @@ public class OSMProcedures {
             this.toNode = route.toNode;
             this.toRel = route.toRel;
             this.distance = route.distance;
+            this.length = route.length;
+            this.count = route.count;
         }
     }
 

@@ -142,7 +142,7 @@ public class OSMProceduresTest {
         OSMModel.OSMWay chain5d = osm.getWay(branch + "-5d");
         Node startNode = chain0.nodes.get(0).node;
         ArrayList<Node> found = new ArrayList<>();
-        testResult(db, "CALL spatial.osm.routeIntersection($osmNode,true,true) YIELD fromNode, wayNode, toNode, distance, fromRel, toRel RETURN fromNode, wayNode, toNode, distance, fromRel, toRel",
+        testResult(db, "CALL spatial.osm.routeIntersection($osmNode,true,true,true) YIELD fromNode, wayNode, toNode, distance, fromRel, toRel RETURN fromNode, wayNode, toNode, distance, fromRel, toRel",
                 map("osmNode", startNode), res -> {
                     while (res.hasNext()) {
                         Map<String, Object> r = res.next();

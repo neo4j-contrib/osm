@@ -112,7 +112,7 @@ public class OSMModelIntegrationTest {
         Node startNode = chain0.wayNodes.get(0);
         try (Transaction tx = db.beginTx()) {
             Relationship rel = startNode.getSingleRelationship(OSMModel.NODE, Direction.OUTGOING);
-            OSMModel.IntersectionRoute route = osm.intersectionRoute(rel.getEndNode(), rel, startNode);
+            OSMModel.IntersectionRoute route = osm.intersectionRoute(rel.getEndNode(), rel, startNode, true);
             assertThat("Should succeed in finding an intersection", route.process(db), equalTo(true));
             assertThat("Should find intersection to first node of chain-5u", route.toNode, equalTo(chain5u.nodes.get(0).node));
             assertThat("Should find intersection to first node of chain-5d", route.toNode, equalTo(chain5d.nodes.get(0).node));

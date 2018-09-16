@@ -12,6 +12,7 @@ import org.neo4j.values.storable.Values;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 
 public class OSMModel {
     public static final RelationshipType TAGS = RelationshipType.withName("TAGS");
@@ -44,8 +45,8 @@ public class OSMModel {
         return new ClosestWay(poi);
     }
 
-    public IntersectionRoute intersectionRoute(Node osmNode, Relationship relToStartWayNode, Node startOsmWayNode) {
-        return new IntersectionRoute(osmNode, relToStartWayNode, startOsmWayNode);
+    public IntersectionRoute intersectionRoute(Node osmNode, Relationship relToStartWayNode, Node startOsmWayNode, boolean addLabels) {
+        return new IntersectionRoute(osmNode, relToStartWayNode, startOsmWayNode, addLabels);
     }
 
     public class LocatedNode {
@@ -410,16 +411,26 @@ public class OSMModel {
         public Node wayNode;
         public Node toNode;
         public double distance;
+        public int length;
+        public int count;
         public Relationship fromRel;
         public Relationship toRel;
+        public boolean addLabels;
+        public int maxDepth;
+        private HashSet<Node> previouslySeen;
 
-        public IntersectionRoute(Node node, Relationship wayNodeRel, Node wayNode) {
+        public IntersectionRoute(Node node, Relationship wayNodeRel, Node wayNode, boolean addLabels) {
             this.fromNode = node;
             this.fromRel = wayNodeRel;
             this.wayNode = wayNode;
+            this.addLabels = addLabels;
             this.toNode = null;
             this.toRel = null;
             this.distance = 0;
+            this.length = 0;
+            this.count = 0;
+            this.maxDepth = 20;
+            this.previouslySeen = new HashSet<>();
         }
 
         @Override
@@ -430,7 +441,7 @@ public class OSMModel {
         public boolean process(GraphDatabaseService db) {
             System.out.println("Searching for route from OSMNode:" + fromNode + " via OSMWayNode:" + wayNode);
             this.distance = 0;
-            PathSegment pathSegment = findIntersection(db, wayNode);
+            PathSegment pathSegment = findIntersection(db, wayNode, 0);
             if (pathSegment == null || pathSegment.lastSegment().osmNode == null) {
                 this.distance = 0;
                 return false;
@@ -438,6 +449,8 @@ public class OSMModel {
                 this.toNode = pathSegment.lastSegment().osmNode;
                 this.toRel = pathSegment.lastRel();
                 this.distance = pathSegment.totalDistance();
+                this.length = pathSegment.totalLength();
+                this.count = pathSegment.countSegments();
                 return true;
             }
         }
@@ -498,7 +511,7 @@ public class OSMModel {
                 return distance + ((nextSegment != null) ? nextSegment.totalDistance() : 0);
             }
 
-            double totalLength() {
+            int totalLength() {
                 return length + ((nextSegment != null) ? nextSegment.totalLength() : 0);
             }
 
@@ -508,6 +521,10 @@ public class OSMModel {
 
             PathSegment lastSegment() {
                 return (nextSegment == null) ? this : nextSegment.lastSegment();
+            }
+
+            int countSegments() {
+                return 1 + ((nextSegment == null) ? 0 : nextSegment.countSegments());
             }
 
             boolean process(GraphDatabaseService db) {
@@ -567,9 +584,14 @@ public class OSMModel {
             }
         }
 
-        private PathSegment findIntersection(GraphDatabaseService db, Node startNode) {
+        private PathSegment findIntersection(GraphDatabaseService db, Node startNode, int depth) {
             PathSegment pathSegment = new PathSegment(startNode);
-            if (pathSegment.process(db)) {
+            if (depth < maxDepth && pathSegment.process(db)) {
+                if (previouslySeen.contains(pathSegment.osmNode)) {
+                    System.out.println("\tAlready processed potential intersection node, rejecting cyclic route: " + pathSegment.osmNode);
+                    return null;
+                }
+                previouslySeen.add(pathSegment.osmNode);
                 if (pathSegment.osmNode.hasLabel(OSMModel.Intersection)) {
                     System.out.println("\tFound labeled intersection: " + pathSegment.osmNode);
                     return pathSegment;
@@ -577,14 +599,19 @@ public class OSMModel {
                     ArrayList<Relationship> rels = pathSegment.nextWayRels();
                     if (rels.size() > 1) {
                         // Not a chain, but an intersection, let's stop here
-                        System.out.println("\tFound unlabeled intersection: " + pathSegment.osmNode);
-                        pathSegment.osmNode.addLabel(OSMModel.Intersection);
-                        return pathSegment;
+                        if (addLabels) {
+                            System.out.println("\tFound unlabeled intersection (will add label and include): " + pathSegment.osmNode);
+                            pathSegment.osmNode.addLabel(OSMModel.Intersection);
+                            return pathSegment;
+                        } else {
+                            System.out.println("\tFound unlabeled intersection (will not add label, rejecting): " + pathSegment.osmNode);
+                            return null;
+                        }
                     } else if (rels.size() == 1) {
                         // This is a connection in a chain, keep looking
                         System.out.println("\tFound chain link at " + pathSegment.osmNode + ", searching further...");
                         Node nextWayNode = rels.get(0).getStartNode();
-                        pathSegment.nextSegment = findIntersection(db, nextWayNode);
+                        pathSegment.nextSegment = findIntersection(db, nextWayNode, depth + 1);
                         return pathSegment;
                     } else {
                         // the end of a chain?
