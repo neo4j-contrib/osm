@@ -38,6 +38,7 @@ public class OSMProceduresTest {
         this.osm.buildMultiChain("ChainBottomRight", 10, 0, 10, 5, 1, -1);
         this.osm.buildMultiChain("ChainTopLeft", 0, 10, 10, 5, -1, 1);
         this.osm.buildMultiChain("ChainBottomLeft", 0, 0, 10, 5, -1, -1);
+        this.osm.addIntersectionLabels();
     }
 
     @After

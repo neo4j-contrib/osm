@@ -1,9 +1,6 @@
 package org.neo4j.gis.osm.model;
 
-import org.neo4j.graphdb.GraphDatabaseService;
-import org.neo4j.graphdb.Node;
-import org.neo4j.graphdb.Relationship;
-import org.neo4j.graphdb.Transaction;
+import org.neo4j.graphdb.*;
 import org.neo4j.values.storable.CRSCalculator;
 import org.neo4j.values.storable.CoordinateReferenceSystem;
 import org.neo4j.values.storable.PointValue;
@@ -11,6 +8,7 @@ import org.neo4j.values.storable.Values;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 
 public class TestOSMModel extends OSMModel {
     ArrayList<OSMModel.OSMWay> ways;
@@ -43,6 +41,28 @@ public class TestOSMModel extends OSMModel {
         int y = ydir * size * (count / 2);
         ways.add(makeVerticalWay(size, name + "-" + count + "u", x + xbase, y + ybase, 1));
         ways.add(makeVerticalWay(size, name + "-" + count + "d", x + xbase, y + ybase, -1));
+    }
+
+    public void addIntersectionLabels() {
+        try (Transaction tx = db.beginTx()) {
+            ResourceIterator<Node> routable = db.findNodes(OSMModel.Routable);
+            while (routable.hasNext()) {
+                Node node = routable.next();
+                Iterator<Relationship> routes = node.getRelationships(OSMModel.NODE, Direction.INCOMING).iterator();
+                int count = 0;
+                while (routes.hasNext()) {
+                    Node wayNode = routes.next().getStartNode();
+                    for (Relationship rel : wayNode.getRelationships(OSMModel.NEXT, Direction.BOTH)) {
+                        count++;
+                    }
+                }
+                if (count > 2) {
+                    node.addLabel(OSMModel.Intersection);
+                    System.out.println("Added Intersection label to " + node);
+                }
+            }
+            tx.success();
+        }
     }
 
     public OSMModel.OSMWay getWay(String name) {

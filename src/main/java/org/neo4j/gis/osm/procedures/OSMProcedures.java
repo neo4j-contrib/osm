@@ -40,27 +40,29 @@ public class OSMProcedures {
     public Stream<IntersectionRouteResult> findStreetRoute(@Name("OSMNode") Node node, @Name("deleteExistingRoutes") boolean deleteExistingRoutes, @Name("createNewRoutes") boolean createNewRoutes, @Name("addLabels") boolean addLabels) throws ProcedureException {
         try {
             OSMModel osm = new OSMModel(db);
-            ArrayList<OSMModel.IntersectionRoute> routesToSearch = new ArrayList<>();
+            ArrayList<OSMModel.IntersectionRoutes> routesToSearch = new ArrayList<>();
             for (Relationship rel : node.getRelationships(OSMModel.NODE, Direction.INCOMING)) {
-                routesToSearch.add(osm.intersectionRoute(node, rel, rel.getStartNode(), addLabels));
+                routesToSearch.add(osm.intersectionRoutes(node, rel, rel.getStartNode(), addLabels));
             }
             ArrayList<IntersectionRouteResult> routesFound = new ArrayList<>();
             Collections.reverse(routesToSearch);
-            for (OSMModel.IntersectionRoute route : routesToSearch) {
-                if (route.process(db)) {
-                    if (!deleteExistingRoutes && route.getExistingRoutes().size() > 0) {
-                        System.out.println("Already have existing routes between " + route.fromNode + " and " + route.toNode);
-                    } else {
-                        if (deleteExistingRoutes) {
-                            route.getExistingRoutes().forEach(Relationship::delete);
+            for (OSMModel.IntersectionRoutes routes : routesToSearch) {
+                if (routes.process(db)) {
+                    for(OSMModel.IntersectionRoute route:routes.routes) {
+                        if (!deleteExistingRoutes && route.getExistingRoutes().size() > 0) {
+                            System.out.println("Already have existing routes between " + route.fromNode + " and " + route.toNode);
+                        } else {
+                            if (deleteExistingRoutes) {
+                                route.getExistingRoutes().forEach(Relationship::delete);
+                            }
+                            if (createNewRoutes) {
+                                route.mergeRouteRelationship();
+                            }
+                            routesFound.add(new IntersectionRouteResult(route));
                         }
-                        if (createNewRoutes) {
-                            route.mergeRouteRelationship();
-                        }
-                        routesFound.add(new IntersectionRouteResult(route));
                     }
                 } else {
-                    System.out.println("Failed to find a route for " + route);
+                    System.out.println("Failed to find a routes for " + routes);
                 }
             }
             System.out.println("Found " + routesFound.size() + " routes from " + node);

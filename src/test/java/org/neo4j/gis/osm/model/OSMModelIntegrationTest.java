@@ -29,6 +29,7 @@ public class OSMModelIntegrationTest {
         this.osm.buildMultiChain("ChainBottomRight", 10, 0, 10, 5, 1, -1);
         this.osm.buildMultiChain("ChainTopLeft", 0, 10, 10, 5, -1, 1);
         this.osm.buildMultiChain("ChainBottomLeft", 0, 0, 10, 5, -1, -1);
+        this.osm.addIntersectionLabels();
     }
 
     @After
@@ -89,7 +90,7 @@ public class OSMModelIntegrationTest {
         try (Transaction tx = db.beginTx()) {
             Relationship rel = startNode.getSingleRelationship(OSMModel.NODE, Direction.OUTGOING);
             for (int i = 0; i < 5; i++) {
-                OSMModel.IntersectionRoute.PathSegment pathSegment = new OSMModel.IntersectionRoute.PathSegment(startNode);
+                OSMModel.IntersectionRoutes.PathSegmentTree pathSegment = new OSMModel.IntersectionRoutes.PathSegmentTree(startNode, Direction.OUTGOING);
                 assertThat("Should be able to follow path segment " + i, pathSegment.process(db), equalTo(true));
                 assertThat("Should have found a path segment " + i + " of length 10", pathSegment.length, equalTo(10));
                 ArrayList<Relationship> nextRels = pathSegment.nextWayRels();
@@ -112,8 +113,10 @@ public class OSMModelIntegrationTest {
         Node startNode = chain0.wayNodes.get(0);
         try (Transaction tx = db.beginTx()) {
             Relationship rel = startNode.getSingleRelationship(OSMModel.NODE, Direction.OUTGOING);
-            OSMModel.IntersectionRoute route = osm.intersectionRoute(rel.getEndNode(), rel, startNode, true);
-            assertThat("Should succeed in finding an intersection", route.process(db), equalTo(true));
+            OSMModel.IntersectionRoutes routes = osm.intersectionRoutes(rel.getEndNode(), rel, startNode, true);
+            assertThat("Should succeed in finding an intersection", routes.process(db), equalTo(true));
+            assertThat("Should find one route from", routes.routes.size(), equalTo(1));
+            OSMModel.IntersectionRoute route = routes.routes.get(0);
             assertThat("Should find intersection to first node of chain-5u", route.toNode, equalTo(chain5u.nodes.get(0).node));
             assertThat("Should find intersection to first node of chain-5d", route.toNode, equalTo(chain5d.nodes.get(0).node));
             assertThat("Last chain relationship should point to first node of next chain", route.toRel.getEndNode(), equalTo(chain5u.nodes.get(0).node));

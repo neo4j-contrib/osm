@@ -4,7 +4,7 @@
     <groupId>org.neo4j.gis</groupId>
     <artifactId>osm</artifactId>
     <packaging>jar</packaging>
-    <version>0.2.0-neo4j-3.4.5</version>
+    <version>0.2.1-neo4j-3.4.5</version>
     <name>OpenStreetMap for Neo4j</name>
     <description>OpenStreetMap data model and importer tool for Neo4j</description>
 
