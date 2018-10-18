@@ -21,12 +21,12 @@ public class OSMProcedures {
         try {
             OSMModel osm = new OSMModel(db);
             OSMModel.LocatedNode poi = osm.located(node);
-            OSMModel.OSMWay closestWay = ways.stream().map(osm::way).min(osm.closestWay(poi)).orElseGet(() -> null);
+            OSMModel.OSMWayDistance closestWay = ways.stream().map(osm::way).map(w -> w.closeTo(poi)).min(new OSMModel.ClosestWay()).orElseGet(() -> null);
             if (closestWay == null) {
                 throw new ProcedureException(Status.Procedure.ProcedureCallFailed, "Failed to find closest way from list of %d ways to node %s", ways.size(), node);
             }
             System.out.println("spatial.osm.routePointOfInterest(" + node + ") located closest way: " + closestWay);
-            OSMModel.LocationMaker locationMaker = closestWay.getClosest(poi).getLocationMaker();
+            OSMModel.LocationMaker locationMaker = closestWay.getLocationMaker();
             Node connected = locationMaker.process(db);
             System.out.println("spatial.osm.routePointOfInterest(" + node + ") created connected node: " + connected);
             return Stream.of(new PointRouteResult(connected));

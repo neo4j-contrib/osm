@@ -38,10 +38,6 @@ public class OSMModel {
         return new OSMWay(node);
     }
 
-    public ClosestWay closestWay(LocatedNode poi) {
-        return new ClosestWay(poi);
-    }
-
     public IntersectionRoutes intersectionRoutes(Node osmNode, Relationship relToStartWayNode, Node startOsmWayNode, boolean addLabels) {
         return new IntersectionRoutes(osmNode, relToStartWayNode, startOsmWayNode, addLabels);
     }
@@ -88,15 +84,17 @@ public class OSMModel {
     public class OSMWay {
         String name;
         Node wayNode;
-        Node tagsNode;
         public ArrayList<Node> wayNodes;
         public ArrayList<LocatedNode> nodes;
         HashMap<Long, LocatedNode> seenNodes;
-        DistanceResult closest;
-
         OSMWay(Node wayNode) {
+            if (!wayNode.hasLabel(OSMWay))
+                throw new IllegalArgumentException("Way node does not have :OSMWay label: " + wayNode);
+            Relationship tagsRel = wayNode.getSingleRelationship(TAGS, Direction.OUTGOING);
+            if (tagsRel == null)
+                throw new IllegalArgumentException("Way node does not have outgoing :TAGS relationship: " + wayNode);
             this.wayNode = wayNode;
-            this.tagsNode = wayNode.getSingleRelationship(TAGS, Direction.OUTGOING).getEndNode();
+            Node tagsNode = tagsRel.getEndNode();
             if (wayNode.hasProperty("name")) name = wayNode.getProperty("name").toString();
             else if (tagsNode.hasProperty("name")) name = tagsNode.getProperty("name").toString();
             this.wayNodes = new ArrayList<>();
@@ -119,6 +117,10 @@ public class OSMModel {
             }
         }
 
+        public OSMWayDistance closeTo(LocatedNode poi){
+            return new OSMWayDistance(this, poi);
+        }
+
         public String getName() {
             return (name == null) ? "<unknown>" : name;
         }
@@ -127,86 +129,92 @@ public class OSMModel {
         public String toString() {
             return "OSMWay[" + wayNode.getId() + "]: name:" + name + ",  length:" + nodes.size();
         }
+    }
 
-        public DistanceResult getClosest() {
-            if (closest == null) {
-                throw new IllegalStateException("No closest node found - was 'closestDistance' really called?");
-            }
-            return closest;
+    public class OSMWayDistance {
+        OSMWay way;
+        LocatedNode node;
+        DistanceResult closest;
+
+        private OSMWayDistance(OSMWay way, LocatedNode node) {
+            this.way = way;
+            this.node = node;
+            calculateClosestDistance();
         }
 
-        public DistanceResult getClosest(LocatedNode poi) {
-            if (closest == null) {
-                System.out.println("No closest way set - was 'closestDistance' really called?");
-                closest = closestDistanceTo(poi);
-            }
-            return closest;
-        }
-
-        DistanceResult closestDistanceTo(LocatedNode node) {
+        private void calculateClosestDistance() {
             closest = new DistanceResult(node);
-            for (int i = 0; i < nodes.size(); i++) {
-                LocatedNode n = nodes.get(i);
+            for (int i = 0; i < way.nodes.size(); i++) {
+                LocatedNode n = way.nodes.get(i);
                 if (!n.point.getCoordinateReferenceSystem().equals(closest.crs)) {
                     throw new IllegalArgumentException("Cannot compare points of different crs: " + n.point.getCoordinateReferenceSystem() + " != " + closest.crs);
                 }
                 double distance = closest.calculator.distance(node.point, n.point);
-                if (distance < closest.distance) {
-                    closest.distance = distance;
+                if (distance < closest.nodeDistance) {
+                    closest.nodeDistance = distance;
                     closest.closestNodeIndex = i;
                 }
             }
-            return closest;
+            closest.locationMaker = closest.makeLocationMaker();
+        }
+
+        public LocationMaker getLocationMaker() {
+            return closest.getLocationMaker();
         }
 
         public class DistanceResult {
             LocatedNode node;
-            double distance;
+            double nodeDistance;
             int closestNodeIndex;
             CoordinateReferenceSystem crs;
             public CRSCalculator calculator;
+            private LocationMaker locationMaker;
 
             DistanceResult(LocatedNode node) {
                 this.node = node;
                 crs = node.point.getCoordinateReferenceSystem();
                 calculator = crs.getCalculator();
-                distance = Double.MAX_VALUE;
+                nodeDistance = Double.MAX_VALUE;
                 closestNodeIndex = -1;
             }
 
             @Override
             public String toString() {
-                Object closest = (closestNodeIndex < 0 || closestNodeIndex >= nodes.size()) ? "null" : nodes.get(closestNodeIndex);
-                return "DistanceResult: distance:" + distance + " from " + node + " to " + closest;
+                Object closest = (closestNodeIndex < 0 || closestNodeIndex >= way.nodes.size()) ? "null" : way.nodes.get(closestNodeIndex);
+                return "DistanceResult: distance:" + nodeDistance + " from " + node + " to " + closest;
             }
 
-            public LocationMaker getLocationMaker() {
+            LocationMaker getLocationMaker() {
+                return this.locationMaker;
+            }
+
+            private LocationMaker makeLocationMaker() {
                 if (closestNodeIndex < 0) {
                     throw new IllegalStateException("No closest node known - has closestDistanceTo(node) not been called?");
                 }
                 if (closestNodeIndex == 0) {
-                    if (nodes.size() > 1) {
-                        return getLocationMaker(0, 1);
+                    if (way.nodes.size() > 1) {
+                        return makeLocationMaker(0, 1);
                     } else {
-                        return new LocationExists(node.node, nodes.get(0).node, distance);
+                        return new LocationExists(node.node, way.nodes.get(0).node, nodeDistance);
                     }
                 }
-                if (closestNodeIndex == nodes.size() - 1) {
-                    return getLocationMaker(closestNodeIndex - 1, closestNodeIndex);
+                if (closestNodeIndex == way.nodes.size() - 1) {
+                    return makeLocationMaker(closestNodeIndex - 1, closestNodeIndex);
                 } else {
-                    double left = calculator.distance(nodes.get(closestNodeIndex - 1).point, node.point);
-                    double right = calculator.distance(nodes.get(closestNodeIndex + 1).point, node.point);
+                    double left = calculator.distance(way.nodes.get(closestNodeIndex - 1).point, node.point);
+                    double right = calculator.distance(way.nodes.get(closestNodeIndex + 1).point, node.point);
                     if (left < right) {
-                        return getLocationMaker(closestNodeIndex - 1, closestNodeIndex);
+                        return makeLocationMaker(closestNodeIndex - 1, closestNodeIndex);
                     } else {
-                        return getLocationMaker(closestNodeIndex, closestNodeIndex + 1);
+                        return makeLocationMaker(closestNodeIndex, closestNodeIndex + 1);
                     }
                 }
             }
 
-            LocationMaker getLocationMaker(int leftIndex, int rightIndex) {
-                LocatedNode left = nodes.get(leftIndex);
-                LocatedNode right = nodes.get(rightIndex);
+            private LocationMaker makeLocationMaker(int leftIndex, int rightIndex) {
+                LocatedNode left = way.nodes.get(leftIndex);
+                LocatedNode right = way.nodes.get(rightIndex);
                 Triangle triangle = new Triangle(node.point, left.point, right.point);
                 if (triangle.leftAngle() > 85.0) {
                     return new LocationExists(node.node, left.node, calculator.distance(node.point, left.point));
@@ -225,6 +233,7 @@ public class OSMModel {
     }
 
     public interface LocationMaker {
+        double getDistance();
         Node process(GraphDatabaseService db);
     }
 
@@ -239,6 +248,12 @@ public class OSMModel {
             this.distance = distance;
         }
 
+        @Override
+        public double getDistance() {
+            return distance;
+        }
+
+        @Override
         public Node process(GraphDatabaseService db) {
             System.out.println("\t\tConnecting existing node: " + node);
             try (Transaction tx = db.beginTx()) {
@@ -252,7 +267,7 @@ public class OSMModel {
     }
 
     /**
-     * This class represents the case where the point of itnerest lies between two nodes, but not on the line
+     * This class represents the case where the point of interest lies between two nodes, but not on the line
      * between them so we create a new node on the street (between the two nodes) and link the original node
      * to that, and that to the street nodes in the routable graph.
      */
@@ -262,6 +277,7 @@ public class OSMModel {
         public PointValue point;
         public LocatedNode poi;
         private CRSCalculator calculator;
+        private double distance;
 
         private LocationInterpolated(CRSCalculator calculator, LocatedNode poi, PointValue point, LocatedNode left, LocatedNode right) {
             this.left = left;
@@ -269,8 +285,15 @@ public class OSMModel {
             this.point = point;
             this.poi = poi;
             this.calculator = calculator;
+            this.distance = calculator.distance(point, poi.point);
         }
 
+        @Override
+        public double getDistance() {
+            return distance;
+        }
+
+        @Override
         public Node process(GraphDatabaseService db) {
             Node node;
             try (Transaction tx = db.beginTx()) {
@@ -280,7 +303,7 @@ public class OSMModel {
                 node.setProperty("location", point);
                 createConnection(node, left.node, calculator.distance(point, left.point));
                 createConnection(node, right.node, calculator.distance(point, right.point));
-                createConnection(poi.node, node, calculator.distance(point, poi.point));
+                createConnection(poi.node, node, this.distance);
                 tx.success();
             }
             System.out.println("\t\tCreating interpolated node: " + node);
@@ -312,6 +335,12 @@ public class OSMModel {
             this.rightDist = rightDist;
         }
 
+        @Override
+        public double getDistance() {
+            return 0.0;
+        }
+
+        @Override
         public Node process(GraphDatabaseService db) {
             System.out.println("\t\tLinking point of interest node: " + node);
             try (Transaction tx = db.beginTx()) {
@@ -328,17 +357,9 @@ public class OSMModel {
         }
     }
 
-    public class ClosestWay implements Comparator<OSMWay> {
-        LocatedNode node;
-
-        ClosestWay(LocatedNode node) {
-            this.node = node;
-        }
-
-        public int compare(OSMWay o1, OSMWay o2) {
-            OSMWay.DistanceResult d1 = o1.closestDistanceTo(node);
-            OSMWay.DistanceResult d2 = o2.closestDistanceTo(node);
-            return Double.compare(d1.distance, d2.distance);
+    public static class ClosestWay implements Comparator<OSMWayDistance> {
+        public int compare(OSMWayDistance o1, OSMWayDistance o2) {
+            return Double.compare(o1.closest.locationMaker.getDistance(), o2.closest.locationMaker.getDistance());
         }
     }
 

@@ -127,12 +127,12 @@ public class OSMModelIntegrationTest {
     private void assertFindWay(String name, int expectedNode, double maxDist, double... coords) {
         OSMModel.OSMWay expectedWay = osm.getWay(name);
         OSMModel.LocatedNode poi = osm.makeNode(coords);
-        OSMModel.OSMWay closest = osm.ways.stream().min(osm.closestWay(poi)).orElse(null);
+        OSMModel.OSMWayDistance closest = osm.ways.stream().map(w->w.closeTo(poi)).min(new OSMModel.ClosestWay()).orElse(null);
         assertNotNull("Expected to find a closest way, but was null", closest);
-        assertThat("Found way with wrong name", closest.getName(), equalTo(name));
-        assertThat("Found wrong way", closest, equalTo(expectedWay));
-        OSMModel.OSMWay.DistanceResult distanceResult = closest.getClosest();
-        assertThat("Distance to found node is too long", distanceResult.distance, lessThan(maxDist));
+        assertThat("Found way with wrong name", closest.way.getName(), equalTo(name));
+        assertThat("Found wrong way", closest.way, equalTo(expectedWay));
+        OSMModel.OSMWayDistance.DistanceResult distanceResult = closest.closest;
+        assertThat("Distance to found node is too long", distanceResult.nodeDistance, lessThan(maxDist));
         assertThat("Not the closest node expected from index " + expectedNode, distanceResult.closestNodeIndex, equalTo(expectedNode));
         OSMModel.LocationMaker location = distanceResult.getLocationMaker();
         assertThat(location, instanceOf(OSMModel.LocationExists.class));
@@ -143,11 +143,11 @@ public class OSMModelIntegrationTest {
     private void assertFindWayAndInterpolatedPoint(String name, int[] expectedPair, double maxDist, double... coords) {
         OSMModel.OSMWay expectedWay = osm.getWay(name);
         OSMModel.LocatedNode poi = osm.makeNode(coords);
-        OSMModel.OSMWay closest = osm.ways.stream().min(osm.closestWay(poi)).orElse(null);
+        OSMModel.OSMWayDistance closest = osm.ways.stream().map(w->w.closeTo(poi)).min(new OSMModel.ClosestWay()).orElse(null);
         assertNotNull("Expected to find a closest way, but was null", closest);
-        assertThat("Found way with wrong name", closest.getName(), equalTo(name));
-        assertThat("Found wrong way", closest, equalTo(expectedWay));
-        OSMModel.OSMWay.DistanceResult distanceResult = closest.getClosest();
+        assertThat("Found way with wrong name", closest.way.getName(), equalTo(name));
+        assertThat("Found wrong way", closest.way, equalTo(expectedWay));
+        OSMModel.OSMWayDistance.DistanceResult distanceResult = closest.closest;
         OSMModel.LocatedNode left = expectedWay.nodes.get(expectedPair[0]);
         OSMModel.LocatedNode right = expectedWay.nodes.get(expectedPair[1]);
         OSMModel.LocationMaker location = distanceResult.getLocationMaker();
