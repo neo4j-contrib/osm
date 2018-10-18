@@ -21,7 +21,7 @@ and importer with the following characteristics:
 * Fast and scalable (using the parallel batch importer introduced in Neo4j 2.x)
 * Possible to use without 'Neo4j Spatial' (ie. can be used on Neo4j 3.4 built-in spatial index).
 * Can replace the older OSMImporter in Neo4j Spatial (ie. should work with Neo4j Spatial also).
-* Wider range of use cases, including routing
+* Support for a wider range of use cases, including routing
 
 ## Building
 
@@ -33,7 +33,13 @@ This will run all tests which involves importing some OSM files. If you want to 
 
     mvn clean install -DskipTests
 
-The build will produce the jar `target/osm-1.0-SNAPSHOT.jar` and copy it to the local maven repository.
+The build will produce two jars and copy them to the local maven repository:
+
+* `target/osm-0.2.2-neo4j-3.4.9.jar` is aimed to be used as a dependency in maven projects that depend on this library
+* `target/osm-0.2.2-neo4j-3.4.9-procedures.jar` including procedures, this jar can be copied directly into a Neo4j installation's `plugins` folder
+
+We plan to make a third jar `target/osm-0.2.2-neo4j-3.4.9-all.jar` including all dependencies to faciliate running the command-line importer.
+But until then you need to copy and reference all dependencies as described below.
 
 ## Running
 
@@ -66,12 +72,14 @@ To help build graphs that can be used for routing, two procedures have been adde
 * `spatial.osm.routeIntersection(node,false,false,false)`
 * `spatial.osm.routePointOfInterest(node,ways)`
 
+These can be installed into an installation of Neo4j by copying the `osm-0.2.2-neo4j-3.4.9-procedures.jar` file into the `plugins` folder, and restarting the database.
+
 ### Creating a routing graph of intersections
 
-First identify nodes that are interestions where a driver can make a choice:
+First identify nodes that are interections where a traveller can make a choice:
 
     MATCH (n:OSMNode)
-      WHERE size((n)<-[:NODE]-()) > 2
+      WHERE size((n)<-[:NODE]-(:OSMWayNode)-[:NEXT]-(:OSMWayNode)) > 2
       AND NOT (n:Intersection)
     WITH n LIMIT 100
     MATCH (n)<-[:NODE]-(wn:OSMWayNode), (wn)<-[:NEXT*0..100]-(wx),
@@ -123,4 +131,3 @@ Link the points of interest sub-graph into the routing sub-graph:
       ON CREATE SET r.distance = distance, r.length = length, r.count = count
     RETURN count(*);
 
-    
