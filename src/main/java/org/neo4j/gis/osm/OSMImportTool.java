@@ -3,7 +3,6 @@ package org.neo4j.gis.osm;
 import org.neo4j.gis.osm.importer.OSMInput;
 import org.neo4j.gis.osm.importer.PrintingImportLogicMonitor;
 import org.neo4j.graphdb.factory.GraphDatabaseSettings;
-import org.neo4j.graphdb.spatial.Coordinate;
 import org.neo4j.helpers.Args;
 import org.neo4j.helpers.ArrayUtil;
 import org.neo4j.helpers.Exceptions;
@@ -12,18 +11,19 @@ import org.neo4j.io.IOUtils;
 import org.neo4j.io.fs.DefaultFileSystemAbstraction;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.fs.FileUtils;
+import org.neo4j.io.layout.DatabaseLayout;
 import org.neo4j.io.os.OsBeanUtil;
 import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.configuration.Settings;
-import org.neo4j.kernel.impl.logging.LogService;
-import org.neo4j.kernel.impl.logging.StoreLogService;
-import org.neo4j.kernel.impl.scheduler.CentralJobScheduler;
 import org.neo4j.kernel.impl.store.format.RecordFormatSelector;
 import org.neo4j.kernel.impl.util.Converters;
 import org.neo4j.kernel.impl.util.Validator;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.internal.Version;
 import org.neo4j.kernel.lifecycle.LifeSupport;
+import org.neo4j.logging.internal.LogService;
+import org.neo4j.logging.internal.StoreLogService;
+import org.neo4j.scheduler.JobScheduler;
 import org.neo4j.unsafe.impl.batchimport.BatchImporter;
 import org.neo4j.unsafe.impl.batchimport.BatchImporterFactory;
 import org.neo4j.unsafe.impl.batchimport.Configuration;
@@ -34,7 +34,6 @@ import org.neo4j.unsafe.impl.batchimport.input.InputException;
 import org.neo4j.unsafe.impl.batchimport.staging.ExecutionMonitor;
 import org.neo4j.unsafe.impl.batchimport.staging.ExecutionMonitors;
 import org.neo4j.unsafe.impl.batchimport.staging.SpectrumExecutionMonitor;
-import org.w3c.dom.ranges.Range;
 
 import java.io.*;
 import java.nio.charset.Charset;
@@ -51,6 +50,7 @@ import static org.neo4j.helpers.Exceptions.throwIfUnchecked;
 import static org.neo4j.helpers.Format.bytes;
 import static org.neo4j.helpers.Strings.TAB;
 import static org.neo4j.io.ByteUnit.mebiBytes;
+import static org.neo4j.kernel.impl.scheduler.JobSchedulerFactory.createScheduler;
 import static org.neo4j.kernel.impl.store.PropertyType.EMPTY_BYTE_ARRAY;
 import static org.neo4j.unsafe.impl.batchimport.AdditionalInitialIds.EMPTY;
 import static org.neo4j.unsafe.impl.batchimport.Configuration.*;
@@ -288,7 +288,7 @@ public class OSMImportTool {
             configuration = importConfiguration(processors, defaultSettingsSuitableForTests, dbConfig, maxMemory, storeDir, allowCacheOnHeap, defaultHighIO);
             in = defaultSettingsSuitableForTests ? new ByteArrayInputStream(EMPTY_BYTE_ARRAY) : System.in;
             boolean detailedProgress = args.getBoolean(Options.DETAILED_PROGRESS.key(), (Boolean) Options.DETAILED_PROGRESS.defaultValue());
-            doImport(out, err, in, storeDir, logsDir, badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress, range);
+            doImport(out, err, in, DatabaseLayout.of(storeDir), logsDir, badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress, range);
         }
     }
 
@@ -339,7 +339,7 @@ public class OSMImportTool {
         }
     };
 
-    public static void doImport( PrintStream out, PrintStream err, InputStream in, File storeDir, File logsDir, File badFile,
+    public static void doImport( PrintStream out, PrintStream err, InputStream in, DatabaseLayout databaseLayout, File logsDir, File badFile,
                                 FileSystemAbstraction fs, String[] osmFiles,
                                 boolean enableStacktrace,
                                 Config dbConfig, OutputStream badOutput,
@@ -350,13 +350,13 @@ public class OSMImportTool {
         dbConfig.augment(logs_directory, logsDir.getCanonicalPath());
         File internalLogFile = dbConfig.get(store_internal_log_path);
         LogService logService = life.add(StoreLogService.withInternalLog(internalLogFile).build(fs));
-        final CentralJobScheduler jobScheduler = life.add(new CentralJobScheduler());
+        final JobScheduler jobScheduler = life.add(createScheduler());
 
         life.start();
         ExecutionMonitor executionMonitor = detailedProgress
                 ? new SpectrumExecutionMonitor(2, TimeUnit.SECONDS, out, SpectrumExecutionMonitor.DEFAULT_WIDTH)
                 : ExecutionMonitors.defaultVisible(in, jobScheduler);
-        BatchImporter importer = BatchImporterFactory.withHighestPriority().instantiate(storeDir,
+        BatchImporter importer = BatchImporterFactory.withHighestPriority().instantiate(databaseLayout,
                 fs,
                 null, // no external page cache
                 configuration,
@@ -364,8 +364,8 @@ public class OSMImportTool {
                 EMPTY,
                 dbConfig,
                 RecordFormatSelector.selectForConfig(dbConfig, logService.getInternalLogProvider()),
-                new PrintingImportLogicMonitor(out, err));
-        printOverview(storeDir, osmFiles, configuration, out);
+                new PrintingImportLogicMonitor(out, err), jobScheduler);
+        printOverview(databaseLayout.databaseDirectory(), osmFiles, configuration, out);
         success = false;
         try {
             importer.doImport(new OSMInput(fs, osmFiles, configuration, badCollector, range));
@@ -387,7 +387,7 @@ public class OSMImportTool {
             life.shutdown();
 
             if (!success) {
-                err.println("WARNING Import failed. The store files in " + storeDir.getAbsolutePath() +
+                err.println("WARNING Import failed. The store files in " + databaseLayout.databaseDirectory().getAbsolutePath() +
                         " are left as they are, although they are likely in an unusable state. " +
                         "Starting a database on these store files will likely fail or observe inconsistent records so " +
                         "start at your own risk or delete the store manually");

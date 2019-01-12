@@ -1,13 +1,5 @@
 package org.neo4j.gis.osm.importer;
 
-import java.io.*;
-import java.nio.charset.Charset;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.util.*;
-import java.util.function.ToIntFunction;
-
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
 import org.neo4j.io.fs.FileSystemAbstraction;
@@ -23,10 +15,15 @@ import org.neo4j.values.storable.*;
 
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import java.io.*;
+import java.nio.charset.Charset;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
+import java.util.*;
+import java.util.function.ToIntFunction;
 
-import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_LINESTRING;
-import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_POINT;
-import static org.neo4j.gis.spatial.SpatialConstants.GTYPE_POLYGON;
+import static org.neo4j.gis.spatial.SpatialConstants.*;
 
 public class OSMInput implements Input {
     private final String[] osmFiles;
@@ -661,6 +658,7 @@ public class OSMInput implements Input {
                         break;
                     }
                 } catch (XMLStreamException e) {
+                    System.out.println("Failed to parse XML: " + e);
                     e.printStackTrace();
                     break;
                 }
@@ -789,11 +787,11 @@ public class OSMInput implements Input {
     }
 
     public InputIterable nodes() {
-        return InputIterable.replayable(() -> new OSMNodesInputIterator(osmFiles));
+        return () -> new OSMNodesInputIterator(osmFiles);
     }
 
     public InputIterable relationships() {
-        return InputIterable.replayable(() -> new OSMRelationshipsInputIterator(osmFiles));
+        return () -> new OSMRelationshipsInputIterator(osmFiles);
     }
 
     public IdMapper idMapper(NumberArrayFactory numberArrayFactory) {
