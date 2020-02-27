@@ -1,11 +1,14 @@
 package org.neo4j.gis.osm;
 
+import org.junit.BeforeClass;
 import org.junit.Test;
+import org.neo4j.configuration.GraphDatabaseSettings;
+import org.neo4j.dbms.api.DatabaseManagementService;
 import org.neo4j.graphdb.*;
-import org.neo4j.graphdb.factory.GraphDatabaseFactory;
-import org.neo4j.io.fs.DefaultFileSystemAbstraction;
-import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.fs.FileUtils;
+import org.neo4j.io.layout.Neo4jLayout;
+import org.neo4j.kernel.impl.traversal.MonoDirectionalTraversalDescription;
+import org.neo4j.test.TestDatabaseManagementServiceBuilder;
 
 import java.io.File;
 import java.io.IOException;
@@ -21,12 +24,20 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.isOneOf;
 import static org.junit.Assert.fail;
-import static org.neo4j.helpers.collection.MapUtil.map;
+import static org.neo4j.internal.helpers.collection.MapUtil.map;
 
 public class OSMImportToolTest {
 
+    private static Neo4jLayout home = Neo4jLayout.of(new File("target/import-test"));
+
+    @BeforeClass
+    public static void ensureClean() throws IOException {
+        // Previous runs leave databases that are incompatible with newer runs
+        FileUtils.deleteRecursively(home.homeDirectory());
+    }
+
     @Test
-    public void testOneStreet() {
+    public void testOneStreet() throws IOException {
         importAndAssert("one-street", (db, stats) -> {
             stats.put("expectedOSMNodes", 8L);
             stats.put("expectedOSMWayNodes", 8L);
@@ -36,7 +47,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testOneWayStreet() {
+    public void testOneWayStreet() throws IOException {
         importAndAssert("one-way-forward", (db, stats) -> {
             stats.put("expectedOSMNodes", 4L);
             stats.put("expectedOSMWayNodes", 4L);
@@ -47,7 +58,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testOneWayStreetBackwards() {
+    public void testOneWayStreetBackwards() throws IOException {
         importAndAssert("one-way-backward", (db, stats) -> {
             stats.put("expectedOSMNodes", 4L);
             stats.put("expectedOSMWayNodes", 4L);
@@ -58,7 +69,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testTwoStreet() {
+    public void testTwoStreet() throws IOException {
         importAndAssert("two-street", (db, stats) -> {
             stats.put("expectedOSMNodes", 24L);
             stats.put("expectedOSMWayNodes", 24L);
@@ -68,7 +79,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testParking() {
+    public void testParking() throws IOException {
         importAndAssert("parking", (db, stats) -> {
             stats.put("expectedOSMNodes", 4L);
             stats.put("expectedOSMWayNodes", 4L);
@@ -78,7 +89,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testParkingAndStreets() {
+    public void testParkingAndStreets() throws IOException {
         importAndAssert("parking-and-streets", (db, stats) -> {
             stats.put("expectedOSMNodes", 17L);
             stats.put("expectedOSMWayNodes", 26L);
@@ -90,7 +101,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testOSM() {
+    public void testOSM() throws IOException {
         importAndAssert("map", (db, stats) -> {
             stats.put("expectedOSMNodes", 2334L);
             stats.put("nodesWithTags", 202L);
@@ -103,7 +114,7 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testOSM2() {
+    public void testOSM2() throws IOException {
         importAndAssert("map2", (db, stats) -> {
             stats.put("expectedOSMTags", 8796L);
             stats.put("expectedOSMNodes", 43630L);
@@ -117,8 +128,8 @@ public class OSMImportToolTest {
     }
 
     @Test
-    public void testMultiOSM() {
-        importAndAssert("test", new String[]{"map", "map2"}, (db, stats) -> {
+    public void testMultiOSM() throws IOException {
+        importAndAssert(new String[]{"map", "map2"}, (db, stats) -> {
             stats.put("expectedOSMTags", 9170L);
             stats.put("expectedOSMNodes", 45964L);
             stats.put("expectedOSMWayNodes", 53273L);
@@ -128,63 +139,68 @@ public class OSMImportToolTest {
         });
     }
 
-    private File prepareStoreDir(String name) throws IOException {
-        File storeDir = new File("target/databases/", name);
-        FileUtils.deleteRecursively(storeDir);
-        storeDir.mkdirs();
-        return storeDir;
-    }
-
     private File findOSMFile(String name) {
         for (String ext : new String[]{".osm.bz2", ".osm"}) {
             File file = new File("samples/" + name + ext);
             if (file.exists()) return file;
         }
-        return null;
+        throw new IllegalArgumentException("Cannot find import file for '" + name + "'");
     }
 
-    private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
+    private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) throws IOException {
         File osmFile = findOSMFile(name);
-        if (osmFile != null) {
-            try {
-                File storeDir = prepareStoreDir(name);
-                OSMImportTool.main(new String[]{"--into", storeDir.getCanonicalPath(), osmFile.getCanonicalPath()});
-                System.out.println("\nFinished importing " + osmFile + " - analysing database ...");
-                GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
-                Map<String, Long> stats = debugOSMModel(db);
-                assertions.accept(db, stats);
-                db.shutdown();
-            } catch (Exception e) {
-                System.err.println(e);
-                e.printStackTrace(System.err);
-                throw new RuntimeException(e);
-            }
-        }
+        importAndAssert(name, osmFile.getName(), assertions, "--into", home.homeDirectory().getCanonicalPath(), "--database", name, osmFile.getCanonicalPath());
     }
 
-    private void importAndAssert(String name, String[] files, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
-        String[] args = new String[files.length + 3];
+    private void importAndAssert(String[] files, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) throws IOException {
+        String name = "multi-import";
+        String[] args = new String[files.length + 5];
+        args[0] = "--skip-duplicate-nodes";
+        args[1] = "--into";
+        args[2] = home.homeDirectory().getCanonicalPath();
+        args[3] = "--database";
+        args[4] = name;
         for (int i = 0; i < files.length; i++) {
             try {
-                args[i + 3] = findOSMFile(files[i]).getCanonicalPath();
+                args[i + 5] = findOSMFile(files[i]).getCanonicalPath();
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
         }
+        importAndAssert(name, Arrays.toString(files), assertions, args);
+    }
+
+    private void importAndAssert(String name, String description, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions, String ... args) {
         try {
-            File storeDir = prepareStoreDir(name);
-            args[0] = "--skip-duplicate-nodes";
-            args[1] = "--into";
-            args[2] = storeDir.getCanonicalPath();
+            var storeDir = prepareStore(name);
             OSMImportTool.main(args);
-            System.out.println("\nFinished importing " + Arrays.toString(files) + " into " + storeDir + " - analysing database ...");
-            GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabase(storeDir);
-            Map<String, Long> stats = debugOSMModel(db);
-            assertions.accept(db, stats);
-            db.shutdown();
+            System.out.println("\nFinished importing " + description + " into " + storeDir + " - analysing database ...");
+            assertImportedCorrectly(name, assertions);
         } catch (Exception e) {
+            System.err.println("Failed to import " + description + " into '" + name + "': " + e);
+            e.printStackTrace(System.err);
             throw new RuntimeException(e);
         }
+    }
+
+    private File prepareStore(String name) throws IOException {
+        var storeDir = home.databaseLayout(name).databaseDirectory();
+        FileUtils.deleteRecursively(storeDir);
+        if (storeDir.mkdirs()) {
+            System.out.println("Created store directory: " + storeDir);
+        }
+        return storeDir;
+    }
+
+    private void assertImportedCorrectly(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
+        // We are testing against community, and that cannot have multiple databases
+        DatabaseManagementService databases = new TestDatabaseManagementServiceBuilder(home)
+                .setConfig(GraphDatabaseSettings.default_database, name)
+                .setConfig(GraphDatabaseSettings.fail_on_missing_files, false).build();
+        GraphDatabaseService db = databases.database(name);
+        Map<String, Long> stats = debugOSMModel(db);
+        assertions.accept(db, stats);
+        databases.shutdown();
     }
 
     private Map<String, Long> debugOSMModel(GraphDatabaseService db) {
@@ -201,13 +217,16 @@ public class OSMImportToolTest {
         for (String type : new String[]{"TAGS", "FIRST_NODE", "NEXT", "NODE"}) {
             debugLine(countRelationshipsWithType(db, type), "Relationships of type '" + type + "'");
         }
-        Result result = db.execute("MATCH ()-[:NODE]->(n:OSMNode)<-[:NODE]-() WITH n, count(n) AS ways RETURN ways, count(ways) AS count");
-        if (result.hasNext()) {
-            System.out.println(format("%8s%8s", "ways", "count"));
-            while (result.hasNext()) {
-                Map<String, Object> record = result.next();
-                System.out.println(format("%8d%8d", Long.parseLong(record.get("ways").toString()), Long.parseLong(record.get("count").toString())));
+        try (Transaction tx = db.beginTx()) {
+            Result result = tx.execute("MATCH ()-[:NODE]->(n:OSMNode)<-[:NODE]-() WITH n, count(n) AS ways RETURN ways, count(ways) AS count");
+            if (result.hasNext()) {
+                System.out.println(format("%8s%8s", "ways", "count"));
+                while (result.hasNext()) {
+                    Map<String, Object> record = result.next();
+                    System.out.println(format("%8d%8d", Long.parseLong(record.get("ways").toString()), Long.parseLong(record.get("count").toString())));
+                }
             }
+            tx.commit();
         }
         return stats;
     }
@@ -266,17 +285,17 @@ public class OSMImportToolTest {
 
     private void assertOSMWay(GraphDatabaseService db, Direction direction, int wayId, long[] expectedNodeIds) {
         try (Transaction tx = db.beginTx()) {
-            Node way = db.findNode(Label.label("OSMWay"), "way_osm_id", wayId);
+            Node way = tx.findNode(Label.label("OSMWay"), "way_osm_id", wayId);
             if (way != null) {
                 assertOneWay(way, direction, a("FORWARD"), a("BACKWARD"));
-                if (way.hasRelationship(RelationshipType.withName("TAGS"), Direction.OUTGOING)) {
+                if (way.hasRelationship(Direction.OUTGOING, RelationshipType.withName("TAGS"))) {
                     Node tags = way.getSingleRelationship(RelationshipType.withName("TAGS"), Direction.OUTGOING).getEndNode();
                     assertOneWay(tags, direction, a("yes", "true", "1"), a("-1"));
                 }
-                if (way.hasRelationship(RelationshipType.withName("FIRST_NODE"), Direction.OUTGOING)) {
+                if (way.hasRelationship(Direction.OUTGOING, RelationshipType.withName("FIRST_NODE"))) {
                     Node firstNode = way.getSingleRelationship(RelationshipType.withName("FIRST_NODE"), Direction.OUTGOING).getEndNode();
                     ArrayList<Node> wayNodes = new ArrayList<>(expectedNodeIds.length);
-                    for (Path path : db.traversalDescription().depthFirst().relationships(RelationshipType.withName("NEXT"), direction).traverse(firstNode)) {
+                    for (Path path : new MonoDirectionalTraversalDescription().depthFirst().relationships(RelationshipType.withName("NEXT"), direction).traverse(firstNode)) {
                         Node endNode = path.endNode();
                         if (wayNodes.size() > 0 && endNode.getId() == firstNode.getId()) {
                             break;
@@ -297,7 +316,7 @@ public class OSMImportToolTest {
             } else {
                 fail("No way found with way_osm_id = " + wayId);
             }
-            tx.success();
+            tx.commit();
         }
     }
 
@@ -318,10 +337,12 @@ public class OSMImportToolTest {
     }
 
     private long countResult(GraphDatabaseService db, String query) {
-        Result result = db.execute(query);
-        assertThat("Expected query to return a result", result.hasNext(), equalTo(true));
-        Map<String, Object> record = result.next();
-        assertThat("Expected record to have a count field", record, hasKey("count"));
-        return (Long) record.get("count");
+        try (Transaction tx = db.beginTx()) {
+            Result result = tx.execute(query);
+            assertThat("Expected query to return a result", result.hasNext(), equalTo(true));
+            Map<String, Object> record = result.next();
+            assertThat("Expected record to have a count field", record, hasKey("count"));
+            return (Long) record.get("count");
+        }
     }
 }

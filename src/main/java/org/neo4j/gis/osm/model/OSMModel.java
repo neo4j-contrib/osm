@@ -4,6 +4,7 @@ import org.neo4j.graphdb.*;
 import org.neo4j.graphdb.spatial.Point;
 import org.neo4j.graphdb.traversal.Evaluators;
 import org.neo4j.graphdb.traversal.TraversalDescription;
+import org.neo4j.kernel.impl.traversal.MonoDirectionalTraversalDescription;
 import org.neo4j.values.storable.CRSCalculator;
 import org.neo4j.values.storable.CoordinateReferenceSystem;
 import org.neo4j.values.storable.PointValue;
@@ -11,6 +12,9 @@ import org.neo4j.values.storable.Values;
 
 import java.util.*;
 
+/**
+ * This class provides an API onto the OpenStreetMap model stored in a Neo4j database.
+ */
 public class OSMModel {
     public static final RelationshipType TAGS = RelationshipType.withName("TAGS");
     public static final RelationshipType FIRST_NODE = RelationshipType.withName("FIRST_NODE");
@@ -24,16 +28,23 @@ public class OSMModel {
     public static final Label OSMNode = Label.label("OSMNode");
     public static final Label OSMTags = Label.label("OSMTags");
 
-    GraphDatabaseService db;
-
-    public OSMModel(GraphDatabaseService db) {
-        this.db = db;
-    }
-
+    /**
+     * Create a wrapper object exposing internal location specific features of a node.
+     */
     public LocatedNode located(Node node) {
         return new LocatedNode(node);
     }
 
+    /**
+     * Load all nodes comprising this way from the database into an in-memory structure.
+     *
+     * Internally this will access the database using the Node API, which assumes the node object was created
+     * with the same transaction that is currently live. If this is not the case, exceptions will be thrown.
+     * So be sure to correctly use only Nodes found in the current transaction. This is generally true if this
+     * code is used from procedures, but easy to get wrong in embedded code, or tests.
+     * @param node representing the OSM way
+     * @return an OSMWay object encapsulating all way information, including nodes comprising the way
+     */
     public OSMWay way(Node node) {
         return new OSMWay(node);
     }
@@ -42,18 +53,18 @@ public class OSMModel {
         return new IntersectionRoutes(osmNode, relToStartWayNode, startOsmWayNode, addLabels);
     }
 
-    public class LocatedNode {
-        public Node node;
-        public PointValue point;
+    /**
+     * A wrapped class to facilitate exposing location specific attributes of OSM nodes.
+     * Internally it will use the API provided by the Node interface to read the location
+     * property, and this assumes the Node object was created (found) with the same transaction currently active.
+     */
+    public static class LocatedNode {
+        private final Node node;
+        private final PointValue point;
 
         LocatedNode(Node node) {
             this.node = node;
             this.point = readPoint(node);
-        }
-
-        LocatedNode(Node node, PointValue point) {
-            this.node = node;
-            this.point = (point == null) ? readPoint(node) : point;
         }
 
         @Override
@@ -61,11 +72,15 @@ public class OSMModel {
             return "Node[" + node.getId() + "]:" + point;
         }
 
-        public Node getNode() {
+        public Node node() {
             return node;
         }
 
-        PointValue readPoint(Node node) {
+        public PointValue point() {
+            return point;
+        }
+
+        private PointValue readPoint(Node node) {
             if (node.hasProperty("location")) {
                 Object location = node.getProperty("location");
                 if (location instanceof PointValue) {
@@ -83,7 +98,7 @@ public class OSMModel {
 
     public class OSMWay {
         String name;
-        Node wayNode;
+        public Node wayNode;
         public ArrayList<Node> wayNodes;
         public ArrayList<LocatedNode> nodes;
         HashMap<Long, LocatedNode> seenNodes;
@@ -101,7 +116,7 @@ public class OSMModel {
             this.nodes = new ArrayList<>();
             this.seenNodes = new HashMap<>();
             Node firstNode = wayNode.getSingleRelationship(FIRST_NODE, Direction.OUTGOING).getEndNode();
-            TraversalDescription wayNodes = db.traversalDescription().breadthFirst().relationships(NEXT, Direction.OUTGOING).evaluator(Evaluators.toDepth(20));
+            TraversalDescription wayNodes = (new MonoDirectionalTraversalDescription()).breadthFirst().relationships(NEXT, Direction.OUTGOING).evaluator(Evaluators.toDepth(20));
             for (Path path : wayNodes.traverse(firstNode)) {
                 Node endNode = path.endNode();
                 Node osmNode = endNode.getSingleRelationship(NODE, Direction.OUTGOING).getEndNode();
@@ -234,7 +249,7 @@ public class OSMModel {
 
     public interface LocationMaker {
         double getDistance();
-        Node process(GraphDatabaseService db);
+        Node process(Transaction tx);
     }
 
     public static class LocationExists implements LocationMaker {
@@ -254,14 +269,11 @@ public class OSMModel {
         }
 
         @Override
-        public Node process(GraphDatabaseService db) {
+        public Node process(Transaction ignore) {
             System.out.println("\t\tConnecting existing node: " + node);
-            try (Transaction tx = db.beginTx()) {
-                node.addLabel(Routable);
-                Relationship rel = poi.createRelationshipTo(node, ROUTE);
-                rel.setProperty("distance", this.distance);
-                tx.success();
-            }
+            node.addLabel(Routable);
+            Relationship rel = poi.createRelationshipTo(node, ROUTE);
+            rel.setProperty("distance", this.distance);
             return node;
         }
     }
@@ -294,18 +306,15 @@ public class OSMModel {
         }
 
         @Override
-        public Node process(GraphDatabaseService db) {
+        public Node process(Transaction tx) {
             Node node;
-            try (Transaction tx = db.beginTx()) {
-                left.node.addLabel(Routable);
-                right.node.addLabel(Routable);
-                node = db.createNode(Routable);
-                node.setProperty("location", point);
-                createConnection(node, left.node, calculator.distance(point, left.point));
-                createConnection(node, right.node, calculator.distance(point, right.point));
-                createConnection(poi.node, node, this.distance);
-                tx.success();
-            }
+            left.node.addLabel(Routable);
+            right.node.addLabel(Routable);
+            node = tx.createNode(Routable);
+            node.setProperty("location", point);
+            createConnection(node, left.node, calculator.distance(point, left.point));
+            createConnection(node, right.node, calculator.distance(point, right.point));
+            createConnection(poi.node, node, this.distance);
             System.out.println("\t\tCreating interpolated node: " + node);
             return node;
         }
@@ -341,18 +350,15 @@ public class OSMModel {
         }
 
         @Override
-        public Node process(GraphDatabaseService db) {
+        public Node process(Transaction tx) {
             System.out.println("\t\tLinking point of interest node: " + node);
-            try (Transaction tx = db.beginTx()) {
-                left.addLabel(Routable);
-                right.addLabel(Routable);
-                node.addLabel(Routable);
-                Relationship leftRel = node.createRelationshipTo(left, ROUTE);
-                leftRel.setProperty("distance", leftDist);
-                Relationship rightRel = node.createRelationshipTo(right, ROUTE);
-                rightRel.setProperty("distance", rightDist);
-                tx.success();
-            }
+            left.addLabel(Routable);
+            right.addLabel(Routable);
+            node.addLabel(Routable);
+            Relationship leftRel = node.createRelationshipTo(left, ROUTE);
+            leftRel.setProperty("distance", leftDist);
+            Relationship rightRel = node.createRelationshipTo(right, ROUTE);
+            rightRel.setProperty("distance", rightDist);
             return node;
         }
     }
@@ -451,7 +457,7 @@ public class OSMModel {
 
         public ArrayList<Relationship> getExistingRoutes() {
             ArrayList<Relationship> existingRoutes = new ArrayList<>();
-            for (Relationship rel : this.fromNode.getRelationships(OSMModel.ROUTE, Direction.BOTH)) {
+            for (Relationship rel : this.fromNode.getRelationships(Direction.BOTH, OSMModel.ROUTE)) {
                 if (rel.getOtherNode(fromNode).equals(this.toNode)) {
                     existingRoutes.add(rel);
                 }
@@ -461,7 +467,7 @@ public class OSMModel {
 
         public Relationship mergeRouteRelationship() {
             ArrayList<Relationship> toDelete = new ArrayList<>();
-            for (Relationship rel : this.fromNode.getRelationships(OSMModel.ROUTE, Direction.BOTH)) {
+            for (Relationship rel : this.fromNode.getRelationships(Direction.BOTH, OSMModel.ROUTE)) {
                 if (rel.getOtherNode(fromNode).equals(this.toNode)) {
                     if (getRelIdFromProperty(rel, "fromRel") == fromRel.getId() && getRelIdFromProperty(rel, "toRel") == toRel.getId()) {
                         toDelete.add(rel);
@@ -514,9 +520,9 @@ public class OSMModel {
             return "IntersectionRoutes:from(" + fromNode + ")via(" + wayNode + ")";
         }
 
-        public boolean process(GraphDatabaseService db) {
+        public boolean process(Transaction tx) {
             System.out.println("Searching for route from OSMNode:" + fromNode + " via OSMWayNode:" + wayNode);
-            for (PathSegmentTree tree : findIntersections(db, wayNode, 0)) {
+            for (PathSegmentTree tree : findIntersections(tx, wayNode, 0)) {
                 for (PathSegment path : tree.asPathSegments()) {
                     routes.add(new IntersectionRoute(fromNode, fromRel, wayNode, path));
                 }
@@ -603,15 +609,15 @@ public class OSMModel {
                 return pathSegments;
             }
 
-            boolean process(GraphDatabaseService db) {
-                traverseToFirstIntersection(db);
+            boolean process(Transaction tx) {
+                traverseToFirstIntersection(tx);
                 return osmNode != null;
             }
 
-            private void traverseToFirstIntersection(GraphDatabaseService db) {
+            private void traverseToFirstIntersection(Transaction tx) {
                 this.distance = 0;
                 this.length = 0;
-                TraversalDescription traversalDescription = db.traversalDescription().depthFirst().relationships(OSMModel.NEXT, direction);
+                TraversalDescription traversalDescription = new MonoDirectionalTraversalDescription().depthFirst().relationships(OSMModel.NEXT, direction);
                 for (Path path : traversalDescription.traverse(fromWayNode)) {
                     if (path.length() > 0) {
                         toWayNode = path.endNode();
@@ -643,7 +649,7 @@ public class OSMModel {
             ArrayList<Relationship> nextWayRels() {
                 ArrayList<Relationship> relationships = new ArrayList<>();
                 if (osmNode != null) {
-                    for (Relationship rel : osmNode.getRelationships(OSMModel.NODE, Direction.INCOMING)) {
+                    for (Relationship rel : osmNode.getRelationships(Direction.INCOMING, OSMModel.NODE)) {
                         if (!rel.equals(lastRel)) {
                             relationships.add(rel);
                         }
@@ -657,10 +663,10 @@ public class OSMModel {
             }
         }
 
-        private List<PathSegmentTree> findIntersections(GraphDatabaseService db, Node startNode, int depth) {
+        private List<PathSegmentTree> findIntersections(Transaction tx, Node startNode, int depth) {
             List<PathSegmentTree> pathSegmentTrees = new ArrayList<>();
             for (Direction direction : new Direction[]{Direction.OUTGOING, Direction.INCOMING}) {
-                PathSegmentTree pathSegmentTree = findIntersection(db, startNode, direction, depth);
+                PathSegmentTree pathSegmentTree = findIntersection(tx, startNode, direction, depth);
                 if (pathSegmentTree != null && pathSegmentTree.osmNode != null) {
                     pathSegmentTrees.add(pathSegmentTree);
                 }
@@ -668,9 +674,9 @@ public class OSMModel {
             return pathSegmentTrees;
         }
 
-        private PathSegmentTree findIntersection(GraphDatabaseService db, Node startNode, Direction direction, int depth) {
+        private PathSegmentTree findIntersection(Transaction tx, Node startNode, Direction direction, int depth) {
             PathSegmentTree pathSegment = new PathSegmentTree(startNode, direction);
-            if (depth < maxDepth && pathSegment.process(db)) {
+            if (depth < maxDepth && pathSegment.process(tx)) {
                 if (previouslySeen.contains(pathSegment.osmNode)) {
                     System.out.println("\tAlready processed potential intersection node, rejecting cyclic route: " + pathSegment.osmNode);
                     return null;
@@ -696,7 +702,7 @@ public class OSMModel {
                         // TODO: Look in two directions (branching the chain, so needs a different storage than nextSegement)
                         System.out.println("\tFound chain link at " + pathSegment.osmNode + ", searching further...");
                         Node nextWayNode = rels.get(0).getStartNode();
-                        pathSegment.childSegments = findIntersections(db, nextWayNode, depth + 1);
+                        pathSegment.childSegments = findIntersections(tx, nextWayNode, depth + 1);
                         return pathSegment;
                     } else {
                         // the end of a chain?

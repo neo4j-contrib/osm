@@ -14,8 +14,10 @@ public class TestOSMModel extends OSMModel {
     ArrayList<OSMModel.OSMWay> ways;
     HashMap<PointValue, LocatedNode> nodes;
 
-    public TestOSMModel(GraphDatabaseService db) {
-        super(db);
+    private Transaction tx;
+
+    public TestOSMModel(Transaction tx) {
+        this.tx = tx;
         this.nodes = new HashMap<>();
         this.ways = new ArrayList<>();
     }
@@ -44,28 +46,26 @@ public class TestOSMModel extends OSMModel {
     }
 
     public void addIntersectionLabels() {
-        try (Transaction tx = db.beginTx()) {
-            ResourceIterator<Node> routable = db.findNodes(OSMModel.Routable);
-            while (routable.hasNext()) {
-                Node node = routable.next();
-                Iterator<Relationship> routes = node.getRelationships(OSMModel.NODE, Direction.INCOMING).iterator();
-                int count = 0;
-                while (routes.hasNext()) {
-                    Node wayNode = routes.next().getStartNode();
-                    for (Relationship rel : wayNode.getRelationships(OSMModel.NEXT, Direction.BOTH)) {
-                        count++;
-                    }
-                }
-                if (count > 2) {
-                    node.addLabel(OSMModel.Intersection);
-                    System.out.println("Added Intersection label to " + node);
+        ResourceIterator<Node> routable = tx.findNodes(OSMModel.Routable);
+        while (routable.hasNext()) {
+            Node node = routable.next();
+            Iterator<Relationship> routes = node.getRelationships(Direction.INCOMING, OSMModel.NODE).iterator();
+            int count = 0;
+            while (routes.hasNext()) {
+                Node wayNode = routes.next().getStartNode();
+                for (Relationship ignore : wayNode.getRelationships(Direction.BOTH, OSMModel.NEXT)) {
+                    count++;
                 }
             }
-            tx.success();
+            if (count > 2) {
+                node.addLabel(OSMModel.Intersection);
+                System.out.println("Added Intersection label to " + node);
+            }
         }
     }
 
     public OSMModel.OSMWay getWay(String name) {
+        if(ways.isEmpty()) loadWays();
         for (OSMModel.OSMWay way : ways) {
             if (way.getName().equals(name)) return way;
         }
@@ -75,7 +75,7 @@ public class TestOSMModel extends OSMModel {
     private OSMModel.OSMWay makeHorizontalWay(int size, String name, double x, double y, int dir) {
         OSMModel.LocatedNode[] nodes = new OSMModel.LocatedNode[size + 1];
         for (int i = 0; i <= size; i++) {
-            nodes[i] = makeNode(x + i * dir, y);
+            nodes[i] = makeNode( x + i * dir, y);
         }
         return makeWay(name, nodes);
     }
@@ -83,52 +83,57 @@ public class TestOSMModel extends OSMModel {
     private OSMModel.OSMWay makeVerticalWay(int size, String name, double x, double y, int dir) {
         OSMModel.LocatedNode[] nodes = new OSMModel.LocatedNode[size + 1];
         for (int i = 0; i <= size; i++) {
-            nodes[i] = makeNode(x, y + i * dir);
+            nodes[i] = makeNode( x, y + i * dir);
         }
         return makeWay(name, nodes);
     }
 
-    private OSMModel.OSMWay makeWay(String name, OSMModel.LocatedNode... nodes) {
-        OSMModel.OSMWay way;
-        CRSCalculator calculator = CoordinateReferenceSystem.WGS84.getCalculator();
-        try (Transaction tx = db.beginTx()) {
-            Node wayNode = db.createNode(OSMModel.OSMWay);
-            wayNode.setProperty("name", name);
-            Node tags = db.createNode(OSMModel.OSMTags);
-            tags.setProperty("name", name);
-            tags.setProperty("highway", "residential");
-            wayNode.createRelationshipTo(tags, OSMModel.TAGS);
-            Node previous = null;
-            PointValue previousPoint = null;
-            for (OSMModel.LocatedNode node : nodes) {
-                Node proxy = db.createNode(OSMModel.OSMWayNode);
-                proxy.createRelationshipTo(node.node, OSMModel.NODE);
-                if (previous == null) {
-                    wayNode.createRelationshipTo(proxy, OSMModel.FIRST_NODE);
-                } else {
-                    Relationship next = previous.createRelationshipTo(proxy, OSMModel.NEXT);
-                    next.setProperty("distance", calculator.distance(node.point, previousPoint));
-                }
-                previous = proxy;
-                previousPoint = node.point;
+    private void loadWays() {
+        ways.clear();
+        ResourceIterator<Node> wayNodes = tx.findNodes(OSMModel.OSMWay);
+        while (wayNodes.hasNext()) {
+            Node wayNode = wayNodes.next();
+            String name = (String) wayNode.getProperty("name");
+            if (name == null) {
+                throw new IllegalStateException("Existing way is missing 'name' property: " + wayNode);
             }
-            way = this.way(wayNode);
-            tx.success();
+            ways.add(way(wayNode));
         }
-        return way;
+    }
+
+    private OSMModel.OSMWay makeWay(String name, OSMModel.LocatedNode... nodes) {
+        CRSCalculator calculator = CoordinateReferenceSystem.WGS84.getCalculator();
+        Node wayNode = tx.createNode(OSMModel.OSMWay);
+        wayNode.setProperty("name", name);
+        Node tags = tx.createNode(OSMModel.OSMTags);
+        tags.setProperty("name", name);
+        tags.setProperty("highway", "residential");
+        wayNode.createRelationshipTo(tags, OSMModel.TAGS);
+        Node previous = null;
+        PointValue previousPoint = null;
+        for (OSMModel.LocatedNode node : nodes) {
+            Node proxy = tx.createNode(OSMModel.OSMWayNode);
+            proxy.createRelationshipTo(node.node(), OSMModel.NODE);
+            if (previous == null) {
+                wayNode.createRelationshipTo(proxy, OSMModel.FIRST_NODE);
+            } else {
+                Relationship next = previous.createRelationshipTo(proxy, OSMModel.NEXT);
+                next.setProperty("distance", calculator.distance(node.point(), previousPoint));
+            }
+            previous = proxy;
+            previousPoint = node.point();
+        }
+        return this.way(wayNode);
     }
 
     public OSMModel.LocatedNode makeNode(double... coords) {
         PointValue point = Values.pointValue(CoordinateReferenceSystem.WGS84, coords);
         OSMModel.LocatedNode located = nodes.get(point);
         if (located == null) {
-            try (Transaction tx = db.beginTx()) {
-                Node node = db.createNode(OSMModel.Routable);
-                node.setProperty("location", point);
-                located = this.located(node);
-                nodes.put(point, located);
-                tx.success();
-            }
+            Node node = tx.createNode(OSMModel.Routable);
+            node.setProperty("location", point);
+            located = this.located(node);
+            nodes.put(point, located);
         }
         return located;
     }

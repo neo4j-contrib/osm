@@ -1,10 +1,10 @@
 package org.neo4j.gis.osm.importer;
 
-import org.neo4j.unsafe.impl.batchimport.ImportLogic;
+import org.neo4j.internal.batchimport.ImportLogic;
 
 import java.io.PrintStream;
 
-import static org.neo4j.helpers.Format.bytes;
+import static org.neo4j.io.ByteUnit.bytes;
 
 public class PrintingImportLogicMonitor implements ImportLogic.Monitor {
     private final PrintStream out;

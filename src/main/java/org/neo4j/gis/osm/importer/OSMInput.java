@@ -2,15 +2,11 @@ package org.neo4j.gis.osm.importer;
 
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream;
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream;
+import org.neo4j.internal.batchimport.Configuration;
+import org.neo4j.internal.batchimport.InputIterable;
+import org.neo4j.internal.batchimport.InputIterator;
+import org.neo4j.internal.batchimport.input.*;
 import org.neo4j.io.fs.FileSystemAbstraction;
-import org.neo4j.io.fs.FileUtils;
-import org.neo4j.unsafe.impl.batchimport.Configuration;
-import org.neo4j.unsafe.impl.batchimport.InputIterable;
-import org.neo4j.unsafe.impl.batchimport.InputIterator;
-import org.neo4j.unsafe.impl.batchimport.cache.NumberArrayFactory;
-import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMapper;
-import org.neo4j.unsafe.impl.batchimport.cache.idmapping.IdMappers;
-import org.neo4j.unsafe.impl.batchimport.input.*;
 import org.neo4j.values.storable.*;
 
 import javax.xml.stream.XMLStreamException;
@@ -34,7 +30,6 @@ public class OSMInput implements Input {
     private final Group relationsGroup;
     private final Group tagsGroup;
     private final Group miscGroup;
-    private final Collector badCollector;
     private final RangeFilter range;
     private final FileSystemAbstraction fs;
 
@@ -45,11 +40,10 @@ public class OSMInput implements Input {
     private final CRSCalculator calculator = wgs84.getCalculator();
     private final Configuration config;
 
-    public OSMInput(FileSystemAbstraction fs, String[] osmFiles, Configuration config, Collector badCollector, RangeFilter range) {
+    public OSMInput(FileSystemAbstraction fs, String[] osmFiles, Configuration config, RangeFilter range) {
         this.fs = fs;
         this.osmFiles = osmFiles;
         this.config = config;
-        this.badCollector = badCollector;
         this.range = range;
         nodesGroup = this.groups.getOrCreate("osm_nodes");
         waysGroup = this.groups.getOrCreate("osm_ways");
@@ -786,20 +780,24 @@ public class OSMInput implements Input {
         }
     }
 
-    public InputIterable nodes() {
+    @Override
+    public InputIterable nodes(Collector badCollector) {
         return () -> new OSMNodesInputIterator(osmFiles);
     }
 
-    public InputIterable relationships() {
+    @Override
+    public InputIterable relationships(Collector badCollector) {
         return () -> new OSMRelationshipsInputIterator(osmFiles);
     }
 
-    public IdMapper idMapper(NumberArrayFactory numberArrayFactory) {
-        return IdMappers.strings(numberArrayFactory, groups);
+    @Override
+    public IdType idType() {
+        return IdType.STRING;
     }
 
-    public Collector badCollector() {
-        return badCollector;
+    @Override
+    public ReadableGroups groups() {
+        return groups;
     }
 
     private static final int BYTES_PER_NODE = 1000;
@@ -808,7 +806,7 @@ public class OSMInput implements Input {
     private long calcFileSize() {
         long totalSize = 0;
         for (String osmFile : osmFiles) {
-            long fileSize = FileUtils.size(fs, new File(osmFile));
+            long fileSize = new File(osmFile).length();
             if (osmFile.endsWith(".bz2") || osmFile.endsWith(".gz")) fileSize *= 10;
             totalSize += fileSize;
         }
@@ -817,7 +815,7 @@ public class OSMInput implements Input {
 
     public Estimates calculateEstimates(ToIntFunction<Value[]> toIntFunction) throws IOException {
         long fileSize = calcFileSize();
-        return Inputs.knownEstimates(fileSize / BYTES_PER_NODE, fileSize / BYTES_PER_REL, 8, 1, 8, 8, 1);
+        return Input.knownEstimates(fileSize / BYTES_PER_NODE, fileSize / BYTES_PER_REL, 8, 1, 8, 8, 1);
     }
 
     private Map<String, Object> extractProperties(XMLStreamReader parser) {

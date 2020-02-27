@@ -4,17 +4,18 @@
     <groupId>org.neo4j.gis</groupId>
     <artifactId>osm</artifactId>
     <packaging>jar</packaging>
-    <version>0.2.2-neo4j-3.5.1</version>
+    <version>0.2.3-neo4j-4.0.0</version>
     <name>OpenStreetMap for Neo4j</name>
     <description>OpenStreetMap data model and importer tool for Neo4j</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <javac.target>1.8</javac.target>
+        <javac.target>11</javac.target>
         <jmh.version>1.19</jmh.version>
         <compress.version>1.16.1</compress.version>
-        <neo4j.version>3.5.1</neo4j.version>
+        <neo4j.version>4.0.0</neo4j.version>
         <maven-compiler-plugin.version>3.1</maven-compiler-plugin.version>
+        <maven-source-plugin-version>3.1.0</maven-source-plugin-version>
         <maven-assembly-plugin.version>2.5.4</maven-assembly-plugin.version>
     </properties>
 
@@ -119,7 +120,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>${maven-compiler-plugin.version}</version>
                 <configuration>
-                    <!-- Neo4j Procedures require Java 8 -->
+                    <!-- Neo4j 4.x Procedures require Java 11 -->
                     <compilerVersion>${javac.target}</compilerVersion>
                     <source>${javac.target}</source>
                     <target>${javac.target}</target>
@@ -141,7 +142,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
-                <version>2.9.1</version>
+                <version>${maven-source-plugin-version}</version>
                 <executions>
                     <execution>
                         <id>attach-javadocs</id>
@@ -151,7 +152,7 @@
                     </execution>
                 </executions>
                 <configuration>
-                   <additionalparam>-Xdoclint:none</additionalparam>
+                    <failOnError>false</failOnError>
                 </configuration>
             </plugin>
             <plugin>

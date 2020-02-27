@@ -1,42 +1,45 @@
 package org.neo4j.gis.osm;
 
+import org.neo4j.batchinsert.internal.TransactionLogsInitializer;
+import org.neo4j.common.Validator;
+import org.neo4j.configuration.Config;
+import org.neo4j.configuration.GraphDatabaseSettings;
+import org.neo4j.configuration.SettingValueParsers;
+import org.neo4j.function.Predicates;
 import org.neo4j.gis.osm.importer.OSMInput;
 import org.neo4j.gis.osm.importer.PrintingImportLogicMonitor;
-import org.neo4j.graphdb.factory.GraphDatabaseSettings;
-import org.neo4j.helpers.Args;
-import org.neo4j.helpers.ArrayUtil;
-import org.neo4j.helpers.Exceptions;
-import org.neo4j.helpers.collection.MapUtil;
+import org.neo4j.internal.batchimport.BatchImporter;
+import org.neo4j.internal.batchimport.BatchImporterFactory;
+import org.neo4j.internal.batchimport.Configuration;
+import org.neo4j.internal.batchimport.ImportLogic;
+import org.neo4j.internal.batchimport.cache.idmapping.string.DuplicateInputIdException;
+import org.neo4j.internal.batchimport.input.BadCollector;
+import org.neo4j.internal.batchimport.input.Collector;
+import org.neo4j.internal.batchimport.input.InputException;
+import org.neo4j.internal.batchimport.staging.ExecutionMonitor;
+import org.neo4j.internal.batchimport.staging.ExecutionMonitors;
+import org.neo4j.internal.batchimport.staging.SpectrumExecutionMonitor;
+import org.neo4j.internal.helpers.Args;
+import org.neo4j.internal.helpers.Exceptions;
 import org.neo4j.io.IOUtils;
 import org.neo4j.io.fs.DefaultFileSystemAbstraction;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.fs.FileUtils;
 import org.neo4j.io.layout.DatabaseLayout;
+import org.neo4j.io.layout.Neo4jLayout;
 import org.neo4j.io.os.OsBeanUtil;
-import org.neo4j.kernel.configuration.Config;
-import org.neo4j.kernel.configuration.Settings;
 import org.neo4j.kernel.impl.store.format.RecordFormatSelector;
 import org.neo4j.kernel.impl.util.Converters;
-import org.neo4j.kernel.impl.util.Validator;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.internal.Version;
 import org.neo4j.kernel.lifecycle.LifeSupport;
 import org.neo4j.logging.internal.LogService;
 import org.neo4j.logging.internal.StoreLogService;
 import org.neo4j.scheduler.JobScheduler;
-import org.neo4j.unsafe.impl.batchimport.BatchImporter;
-import org.neo4j.unsafe.impl.batchimport.BatchImporterFactory;
-import org.neo4j.unsafe.impl.batchimport.Configuration;
-import org.neo4j.unsafe.impl.batchimport.cache.idmapping.string.DuplicateInputIdException;
-import org.neo4j.unsafe.impl.batchimport.input.BadCollector;
-import org.neo4j.unsafe.impl.batchimport.input.Collector;
-import org.neo4j.unsafe.impl.batchimport.input.InputException;
-import org.neo4j.unsafe.impl.batchimport.staging.ExecutionMonitor;
-import org.neo4j.unsafe.impl.batchimport.staging.ExecutionMonitors;
-import org.neo4j.unsafe.impl.batchimport.staging.SpectrumExecutionMonitor;
 
 import java.io.*;
 import java.nio.charset.Charset;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Map;
@@ -44,26 +47,28 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static java.nio.charset.Charset.defaultCharset;
-import static org.neo4j.graphdb.factory.GraphDatabaseSettings.logs_directory;
-import static org.neo4j.graphdb.factory.GraphDatabaseSettings.store_internal_log_path;
-import static org.neo4j.helpers.Exceptions.throwIfUnchecked;
-import static org.neo4j.helpers.Format.bytes;
-import static org.neo4j.helpers.Strings.TAB;
+import static org.apache.commons.lang3.ArrayUtils.isEmpty;
+import static org.neo4j.configuration.GraphDatabaseSettings.logs_directory;
+import static org.neo4j.configuration.GraphDatabaseSettings.store_internal_log_path;
+import static org.neo4j.internal.batchimport.AdditionalInitialIds.EMPTY;
+import static org.neo4j.internal.batchimport.Configuration.*;
+import static org.neo4j.internal.batchimport.input.BadCollector.BAD_FILE_NAME;
+import static org.neo4j.internal.batchimport.input.Collectors.*;
+import static org.neo4j.internal.helpers.Exceptions.throwIfUnchecked;
+import static org.neo4j.internal.helpers.Strings.TAB;
+import static org.neo4j.io.ByteUnit.bytes;
 import static org.neo4j.io.ByteUnit.mebiBytes;
 import static org.neo4j.kernel.impl.scheduler.JobSchedulerFactory.createScheduler;
 import static org.neo4j.kernel.impl.store.PropertyType.EMPTY_BYTE_ARRAY;
-import static org.neo4j.unsafe.impl.batchimport.AdditionalInitialIds.EMPTY;
-import static org.neo4j.unsafe.impl.batchimport.Configuration.*;
-import static org.neo4j.unsafe.impl.batchimport.input.Collectors.*;
 
 public class OSMImportTool {
 
     private static final String UNLIMITED = "unlimited";
 
     enum Options {
-        STORE_DIR("into", null,
-                "<store-dir>",
-                "Database directory to import into. " + "Must not contain existing database."),
+        HOME_DIR("into", null,
+                "<home-dir>",
+                "The root of the DBMS into which to do the import."),
         DB_NAME("database", null,
                 "<database-name>",
                 "Database name to import into. " + "Must not contain existing database.", true),
@@ -221,12 +226,28 @@ public class OSMImportTool {
         main(incomingArguments, false);
     }
 
+    public static final Validator<File> DIRECTORY_IS_WRITABLE = value ->
+    {
+        if (value.mkdirs()) {   // It's OK, we created the directory right now, which means we have write access to it
+            return;
+        }
+
+        File test = new File(value, "_______test___");
+        try {
+            test.createNewFile();
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Directory '" + value + "' not writable: " + e.getMessage());
+        } finally {
+            test.delete();
+        }
+    };
+
     public static void main(String[] incomingArguments, boolean defaultSettingsSuitableForTests) throws Exception {
         PrintStream out = System.out;
         PrintStream err = System.err;
         Args args = Args.parse(incomingArguments);
 
-        if (ArrayUtil.isEmpty(incomingArguments) || asksForUsage(args)) {
+        if (isEmpty(incomingArguments) || asksForUsage(args)) {
             printUsage(out);
             return;
         }
@@ -242,26 +263,30 @@ public class OSMImportTool {
         boolean skipBadEntriesLogging;
         Config dbConfig;
         OutputStream badOutput = null;
-        org.neo4j.unsafe.impl.batchimport.Configuration configuration;
+        org.neo4j.internal.batchimport.Configuration configuration;
         File badFile = null;
         Long maxMemory;
         Boolean defaultHighIO;
         InputStream in;
 
         try (FileSystemAbstraction fs = new DefaultFileSystemAbstraction()) {
-            File storeDir = args.interpretOption(Options.STORE_DIR.key(), Converters.mandatory(), Converters.toFile(), Validators.DIRECTORY_IS_WRITABLE);
+            File homeDir = args.interpretOption(Options.HOME_DIR.key(), Converters.mandatory(), Converters.toFile(), DIRECTORY_IS_WRITABLE);
+            homeDir.mkdirs();
+            var homeLayout = Neo4jLayout.of(homeDir);
+            var databaseName = args.get(Options.DB_NAME.key(), "osm");
+            var databaseLayout = homeLayout.databaseLayout(databaseName);
             boolean deleteDb = args.getBoolean(Options.DELETE_DB.key(), Boolean.FALSE, Boolean.TRUE);
             if (deleteDb) {
-                FileUtils.deleteRecursively(storeDir);
-                storeDir.mkdirs();
+                FileUtils.deleteRecursively(databaseLayout.databaseDirectory());
+                FileUtils.deleteRecursively(databaseLayout.getTransactionLogsDirectory());
             }
-            Config config = Config.defaults(GraphDatabaseSettings.neo4j_home, storeDir.getAbsolutePath());
-            File logsDir = config.get(GraphDatabaseSettings.logs_directory);
-            fs.mkdirs(logsDir);
+            Config config = Config.defaults(GraphDatabaseSettings.neo4j_home, Path.of(homeDir.getAbsolutePath()));
+            Path logsDir = config.get(GraphDatabaseSettings.logs_directory);
+            fs.mkdirs(logsDir.toFile());
 
             skipBadEntriesLogging = args.getBoolean(Options.SKIP_BAD_ENTRIES_LOGGING.key(), (Boolean) Options.SKIP_BAD_ENTRIES_LOGGING.defaultValue(), false);
             if (!skipBadEntriesLogging) {
-                badFile = new File(storeDir, BAD_FILE_NAME);
+                badFile = new File(homeDir, BAD_FILE_NAME);
                 badOutput = new BufferedOutputStream(fs.openAsOutputStream(badFile, false));
             }
             OSMRange range = args.interpretOption(Options.RANGE.key(), Converters.optional(), toRange(), RANGE_IS_VALID);
@@ -285,10 +310,10 @@ public class OSMImportTool {
 
             dbConfig = loadDbConfig(args.interpretOption(Options.ADDITIONAL_CONFIG.key(), Converters.optional(), Converters.toFile(), Validators.REGEX_FILE_EXISTS));
             boolean allowCacheOnHeap = args.getBoolean(Options.CACHE_ON_HEAP.key(), (Boolean) Options.CACHE_ON_HEAP.defaultValue());
-            configuration = importConfiguration(processors, defaultSettingsSuitableForTests, dbConfig, maxMemory, storeDir, allowCacheOnHeap, defaultHighIO);
+            configuration = importConfiguration(processors, defaultSettingsSuitableForTests, maxMemory, homeDir, allowCacheOnHeap, defaultHighIO);
             in = defaultSettingsSuitableForTests ? new ByteArrayInputStream(EMPTY_BYTE_ARRAY) : System.in;
             boolean detailedProgress = args.getBoolean(Options.DETAILED_PROGRESS.key(), (Boolean) Options.DETAILED_PROGRESS.defaultValue());
-            doImport(out, err, in, DatabaseLayout.of(storeDir), logsDir, badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress, range);
+            doImport(out, err, in, databaseLayout, logsDir.toFile(), badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress, range);
         }
     }
 
@@ -347,15 +372,16 @@ public class OSMImportTool {
         boolean success;
         LifeSupport life = new LifeSupport();
 
-        dbConfig.augment(logs_directory, logsDir.getCanonicalPath());
-        File internalLogFile = dbConfig.get(store_internal_log_path);
-        LogService logService = life.add(StoreLogService.withInternalLog(internalLogFile).build(fs));
+        Config config = Config.newBuilder().fromConfig(dbConfig).set(logs_directory, Path.of(logsDir.getCanonicalPath())).build();
+        Path internalLogFile = config.get(store_internal_log_path);
+        LogService logService = life.add(StoreLogService.withInternalLog(internalLogFile.toFile()).build(fs));
         final JobScheduler jobScheduler = life.add(createScheduler());
 
         life.start();
         ExecutionMonitor executionMonitor = detailedProgress
                 ? new SpectrumExecutionMonitor(2, TimeUnit.SECONDS, out, SpectrumExecutionMonitor.DEFAULT_WIDTH)
-                : ExecutionMonitors.defaultVisible(in, jobScheduler);
+                : ExecutionMonitors.defaultVisible();
+        ImportLogic.Monitor importMonitor = new PrintingImportLogicMonitor(out, err);
         BatchImporter importer = BatchImporterFactory.withHighestPriority().instantiate(databaseLayout,
                 fs,
                 null, // no external page cache
@@ -364,11 +390,11 @@ public class OSMImportTool {
                 EMPTY,
                 dbConfig,
                 RecordFormatSelector.selectForConfig(dbConfig, logService.getInternalLogProvider()),
-                new PrintingImportLogicMonitor(out, err), jobScheduler);
+                importMonitor, jobScheduler, badCollector, TransactionLogsInitializer.INSTANCE);
         printOverview(databaseLayout.databaseDirectory(), osmFiles, configuration, out);
         success = false;
         try {
-            importer.doImport(new OSMInput(fs, osmFiles, configuration, badCollector, range));
+            importer.doImport(new OSMInput(fs, osmFiles, configuration, range));
             success = true;
         } catch (Exception e) {
             throw andPrintError("Import error", e, enableStacktrace, err);
@@ -395,10 +421,10 @@ public class OSMImportTool {
         }
     }
 
-    public static org.neo4j.unsafe.impl.batchimport.Configuration importConfiguration(
-            Number processors, boolean defaultSettingsSuitableForTests, Config dbConfig, Long maxMemory, File storeDir,
+    public static org.neo4j.internal.batchimport.Configuration importConfiguration(
+            Number processors, boolean defaultSettingsSuitableForTests, Long maxMemory, File homeDir,
             boolean allowCacheOnHeap, Boolean defaultHighIO) {
-        return new org.neo4j.unsafe.impl.batchimport.Configuration() {
+        return new org.neo4j.internal.batchimport.Configuration() {
             @Override
             public long pageCacheMemory() {
                 return defaultSettingsSuitableForTests ? mebiBytes(8) : DEFAULT.pageCacheMemory();
@@ -410,18 +436,13 @@ public class OSMImportTool {
             }
 
             @Override
-            public int denseNodeThreshold() {
-                return dbConfig.get(GraphDatabaseSettings.dense_node_threshold);
-            }
-
-            @Override
             public long maxMemoryUsage() {
                 return maxMemory != null ? maxMemory : DEFAULT.maxMemoryUsage();
             }
 
             @Override
             public boolean highIO() {
-                return defaultHighIO != null ? defaultHighIO : FileUtils.highIODevice(storeDir.toPath(), false);
+                return defaultHighIO != null ? defaultHighIO : FileUtils.highIODevice(homeDir.toPath());
             }
 
             @Override
@@ -453,7 +474,7 @@ public class OSMImportTool {
                             "read more about how to use id spaces in the manual:" +
                             manualReference(ManualPage.IMPORT_TOOL_FORMAT, Anchor.ID_SPACES), e, stackTrace,
                     err);
-        } else if (Exceptions.contains(e, InputException.class)) {
+        } else if (Exceptions.contains(e, Predicates.instanceOfAny(InputException.class))) {
             printErrorMessage("Error in input data", e, stackTrace, err);
         }
         // Fallback to printing generic error and stack trace
@@ -495,7 +516,7 @@ public class OSMImportTool {
                 }
                 return result;
             }
-            return Settings.parseLongWithUnit(maxMemoryString);
+            return SettingValueParsers.parseLongWithUnit(maxMemoryString);
         }
         return null;
     }
@@ -510,11 +531,11 @@ public class OSMImportTool {
         return UNLIMITED.equals(value) ? BadCollector.UNLIMITED_TOLERANCE : Long.parseLong(value);
     }
 
-    private static Config loadDbConfig(File file) throws IOException {
-        return file != null && file.exists() ? Config.defaults(MapUtil.load(file)) : Config.defaults();
+    private static Config loadDbConfig(File file) {
+        return file != null && file.exists() ? Config.newBuilder().fromFile(file).build() : Config.defaults();
     }
 
-    private static void printOverview(File storeDir, String[] osmFiles, org.neo4j.unsafe.impl.batchimport.Configuration configuration, PrintStream out) {
+    private static void printOverview(File storeDir, String[] osmFiles, org.neo4j.internal.batchimport.Configuration configuration, PrintStream out) {
         out.println("Neo4j version: " + Version.getNeo4jVersion());
         out.println("Importing the contents of these OSM files into " + storeDir + ":");
         for (String file : osmFiles) {
