@@ -1,6 +1,5 @@
 package org.neo4j.gis.osm;
 
-import org.neo4j.batchinsert.internal.TransactionLogsInitializer;
 import org.neo4j.common.Validator;
 import org.neo4j.configuration.Config;
 import org.neo4j.configuration.GraphDatabaseSettings;
@@ -29,6 +28,7 @@ import org.neo4j.io.layout.DatabaseLayout;
 import org.neo4j.io.layout.Neo4jLayout;
 import org.neo4j.io.os.OsBeanUtil;
 import org.neo4j.kernel.impl.store.format.RecordFormatSelector;
+import org.neo4j.kernel.impl.transaction.log.files.TransactionLogInitializer;
 import org.neo4j.kernel.impl.util.Converters;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.internal.Version;
@@ -390,7 +390,7 @@ public class OSMImportTool {
                 EMPTY,
                 dbConfig,
                 RecordFormatSelector.selectForConfig(dbConfig, logService.getInternalLogProvider()),
-                importMonitor, jobScheduler, badCollector, TransactionLogsInitializer.INSTANCE);
+                importMonitor, jobScheduler, badCollector, TransactionLogInitializer.getLogFilesInitializer());
         printOverview(databaseLayout.databaseDirectory(), osmFiles, configuration, out);
         success = false;
         try {

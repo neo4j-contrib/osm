@@ -35,10 +35,10 @@ This will run all tests which involves importing some OSM files. If you want to 
 
 The build will produce two jars and copy them to the local maven repository:
 
-* `target/osm-0.2.3-neo4j-4.0.0.jar` is aimed to be used as a dependency in maven projects that depend on this library
-* `target/osm-0.2.3-neo4j-4.0.0-procedures.jar` including procedures, this jar can be copied directly into a Neo4j installation's `plugins` folder
+* `target/osm-0.2.3-neo4j-4.0.8.jar` is aimed to be used as a dependency in maven projects that depend on this library
+* `target/osm-0.2.3-neo4j-4.0.8-procedures.jar` including procedures, this jar can be copied directly into a Neo4j installation's `plugins` folder
 
-We plan to make a third jar `target/osm-0.2.3-neo4j-4.0.0-all.jar` including all dependencies to faciliate running the command-line importer.
+We plan to make a third jar `target/osm-0.2.3-neo4j-4.0.8-all.jar` including all dependencies to faciliate running the command-line importer.
 But until then you need to copy and reference all dependencies as described below.
 
 ## Running
@@ -47,10 +47,10 @@ Get all dependencies together:
 
     mvn dependency:copy-dependencies
 
-To run with the jar at `target/osm-0.2.3-neo4j-4.0.0.jar`:
+To run with the jar at `target/osm-0.2.3-neo4j-4.0.8.jar`:
 
     java -Xms1280m -Xmx1280m \
-      -cp "target/osm-0.2.3-neo4j-4.0.0.jar:target/dependency/*" org.neo4j.gis.osm.OSMImportTool \
+      -cp "target/osm-0.2.3-neo4j-4.0.8.jar:target/dependency/*" org.neo4j.gis.osm.OSMImportTool \
       --skip-duplicate-nodes --delete --into target/neo4j --database map2 samples/map2.osm.bz2
 
 This will import the `samples/map2.osm.bz2` file into the database at `target/neo4j/data/databases/map2`.
@@ -62,7 +62,7 @@ were sufficient to import all of Scandinavia: Sweden, Finland, Iceland, Norway a
 
 The entire US North-East has a BZ2 file of about 1.2G and so should import with similar settings.
 
-## Changes specific to Neo4j 4.0.0
+## Changes specific to Neo4j 4.0
 
 The above command has changed since the Neo4j 3.5 release. The `--into` argument now describes the root directory
 of the Neo4j installation that contains `data/databases` and `data/transactions` subdirectories. The full path
@@ -118,7 +118,7 @@ To help build graphs that can be used for routing, two procedures have been adde
 * `spatial.osm.routeIntersection(node,false,false,false)`
 * `spatial.osm.routePointOfInterest(node,ways)`
 
-These can be installed into an installation of Neo4j by copying the `osm-0.2.3-neo4j-4.0.0-procedures.jar` file into the `plugins` folder, and restarting the database.
+These can be installed into an installation of Neo4j by copying the `osm-0.2.3-neo4j-4.0.8-procedures.jar` file into the `plugins` folder, and restarting the database.
 
 ### Creating a routing graph of intersections
 
