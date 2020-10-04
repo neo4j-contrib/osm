@@ -79,7 +79,7 @@ See the Neo4j documentation for more details on how to run the new administratio
 At the time of writing, the appropriate section could be found at https://neo4j.com/docs/cypher-manual/current/administration.
 
 If you are running the community version of Neo4j, you will need to edit the neo4j.conf file to change the
-value of `dbms.active_database` to the new database name and restart the server.
+value of `dbms.default_database` to the new database name and restart the server.
 As was the case in Neo4j 3.x versions, the community server allows you to have as many databases as you wish, but you can only run one of them at a time.
 The one exception to this is the new `system` database, which is not relevant to this spatial library
 except in that it is the reason for the small changes in directory structure described above,
