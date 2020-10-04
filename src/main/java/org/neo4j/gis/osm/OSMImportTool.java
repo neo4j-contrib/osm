@@ -27,14 +27,16 @@ import org.neo4j.io.fs.FileUtils;
 import org.neo4j.io.layout.DatabaseLayout;
 import org.neo4j.io.layout.Neo4jLayout;
 import org.neo4j.io.os.OsBeanUtil;
+import org.neo4j.io.pagecache.tracing.DefaultPageCacheTracer;
+import org.neo4j.io.pagecache.tracing.PageCacheTracer;
 import org.neo4j.kernel.impl.store.format.RecordFormatSelector;
 import org.neo4j.kernel.impl.transaction.log.files.TransactionLogInitializer;
-import org.neo4j.kernel.impl.util.Converters;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.internal.Version;
 import org.neo4j.kernel.lifecycle.LifeSupport;
 import org.neo4j.logging.internal.LogService;
 import org.neo4j.logging.internal.StoreLogService;
+import org.neo4j.memory.EmptyMemoryTracker;
 import org.neo4j.scheduler.JobScheduler;
 
 import java.io.*;
@@ -122,11 +124,7 @@ public class OSMImportTool {
                 "<path/to/" + Config.DEFAULT_CONFIG_FILE_NAME + ">",
                 "(advanced) File specifying database-specific configuration. For more information consult "
                         + "manual about available configuration options for a neo4j configuration file. "
-                        + "Only configuration affecting store at time of creation will be read. "
-                        + "Examples of supported config are:\n"
-                        + GraphDatabaseSettings.dense_node_threshold.name() + "\n"
-                        + GraphDatabaseSettings.string_block_size.name() + "\n"
-                        + GraphDatabaseSettings.array_block_size.name(), true),
+                        + "Only configuration affecting store at time of creation will be read.", true),
         MAX_MEMORY("max-memory", null,
                 "<max memory that importer can use>",
                 "(advanced) Maximum memory that importer can use for various data structures and caching " +
@@ -143,7 +141,8 @@ public class OSMImportTool {
         HIGH_IO("high-io", null, "Assume a high-throughput storage subsystem",
                 "(advanced) Ignore environment-based heuristics, and assume that the target storage subsystem can " +
                         "support parallel IO with high throughput."),
-        DETAILED_PROGRESS("detailed-progress", false, "true/false", "Use the old detailed 'spectrum' progress printing");
+        DETAILED_PROGRESS("detailed-progress", Boolean.FALSE, "true/false", "Use the old detailed 'spectrum' progress printing"),
+        TRACE_PAGE_CACHE("trace-page-cache", Boolean.FALSE, "true/false", "Trace the counts of page cache usage");
 
         private final String key;
         private final Object defaultValue;
@@ -289,7 +288,7 @@ public class OSMImportTool {
                 badFile = new File(homeDir, BAD_FILE_NAME);
                 badOutput = new BufferedOutputStream(fs.openAsOutputStream(badFile, false));
             }
-            OSMRange range = args.interpretOption(Options.RANGE.key(), Converters.optional(), toRange(), RANGE_IS_VALID);
+            OSMRange range = args.interpretOption(Options.RANGE.key(), Converters.optional(), Converters.toRange(), RANGE_IS_VALID);
             osmFiles = args.orphansAsArray();
             if (osmFiles.length == 0) {
                 throw new IllegalArgumentException("No OSM files specified");
@@ -313,7 +312,8 @@ public class OSMImportTool {
             configuration = importConfiguration(processors, defaultSettingsSuitableForTests, maxMemory, homeDir, allowCacheOnHeap, defaultHighIO);
             in = defaultSettingsSuitableForTests ? new ByteArrayInputStream(EMPTY_BYTE_ARRAY) : System.in;
             boolean detailedProgress = args.getBoolean(Options.DETAILED_PROGRESS.key(), (Boolean) Options.DETAILED_PROGRESS.defaultValue());
-            doImport(out, err, in, databaseLayout, logsDir.toFile(), badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress, range);
+            boolean tracePageCache = args.getBoolean(Options.TRACE_PAGE_CACHE.key(), (Boolean) Options.TRACE_PAGE_CACHE.defaultValue());
+            doImport(out, err, in, databaseLayout, logsDir.toFile(), badFile, fs, osmFiles, enableStacktrace, dbConfig, badOutput, badCollector, configuration, detailedProgress, tracePageCache, range);
         }
     }
 
@@ -353,9 +353,25 @@ public class OSMImportTool {
         }
     }
 
-    public static Function<String,OSMRange> toRange()
-    {
-        return OSMRange::new;
+    static class Converters {
+        public static <T> Function<String, T> mandatory() {
+            return key ->
+            {
+                throw new IllegalArgumentException("Missing argument '" + key + "'");
+            };
+        }
+
+        public static <T> Function<String, T> optional() {
+            return from -> null;
+        }
+
+        public static Function<String, File> toFile() {
+            return File::new;
+        }
+
+        public static Function<String, OSMRange> toRange() {
+            return OSMRange::new;
+        }
     }
 
     public static final Validator<OSMRange> RANGE_IS_VALID = value -> {
@@ -364,11 +380,13 @@ public class OSMImportTool {
         }
     };
 
-    public static void doImport( PrintStream out, PrintStream err, InputStream in, DatabaseLayout databaseLayout, File logsDir, File badFile,
+    public static void doImport(PrintStream out, PrintStream err, InputStream in, DatabaseLayout databaseLayout, File logsDir, File badFile,
                                 FileSystemAbstraction fs, String[] osmFiles,
                                 boolean enableStacktrace,
                                 Config dbConfig, OutputStream badOutput,
-                                Collector badCollector, Configuration configuration, boolean detailedProgress, OSMRange range) throws IOException {
+                                Collector badCollector, Configuration configuration,
+                                boolean detailedProgress, boolean tracePageCache,
+                                OSMRange range) throws IOException {
         boolean success;
         LifeSupport life = new LifeSupport();
 
@@ -382,15 +400,23 @@ public class OSMImportTool {
                 ? new SpectrumExecutionMonitor(2, TimeUnit.SECONDS, out, SpectrumExecutionMonitor.DEFAULT_WIDTH)
                 : ExecutionMonitors.defaultVisible();
         ImportLogic.Monitor importMonitor = new PrintingImportLogicMonitor(out, err);
+        var cacheTracer = tracePageCache ? new DefaultPageCacheTracer() : PageCacheTracer.NULL;
         BatchImporter importer = BatchImporterFactory.withHighestPriority().instantiate(databaseLayout,
                 fs,
                 null, // no external page cache
+                cacheTracer,
                 configuration,
-                logService, executionMonitor,
+                logService,
+                executionMonitor,
                 EMPTY,
                 dbConfig,
                 RecordFormatSelector.selectForConfig(dbConfig, logService.getInternalLogProvider()),
-                importMonitor, jobScheduler, badCollector, TransactionLogInitializer.getLogFilesInitializer());
+                importMonitor,
+                jobScheduler,
+                badCollector,
+                TransactionLogInitializer.getLogFilesInitializer(),
+                EmptyMemoryTracker.INSTANCE
+        );
         printOverview(databaseLayout.databaseDirectory(), osmFiles, configuration, out);
         success = false;
         try {
@@ -411,6 +437,15 @@ public class OSMImportTool {
             }
 
             life.shutdown();
+
+            if (tracePageCache) {
+                System.out.println("Page cache counts:");
+                System.out.println("  faults:  " + cacheTracer.faults());
+                System.out.println("  pins:    " + cacheTracer.pins());
+                System.out.println("  unpins:  " + cacheTracer.unpins());
+                System.out.println("  hits:    " + cacheTracer.hits());
+                System.out.println("  flushes: " + cacheTracer.flushes());
+            }
 
             if (!success) {
                 err.println("WARNING Import failed. The store files in " + databaseLayout.databaseDirectory().getAbsolutePath() +

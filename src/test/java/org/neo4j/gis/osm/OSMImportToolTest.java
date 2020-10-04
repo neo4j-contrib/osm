@@ -124,7 +124,7 @@ public class OSMImportToolTest {
             stats.put("expectedOSMRelationMembers", 626L);
             stats.put("expectedNextRels", 46903L);
             assertOSMModel(db, stats);
-        });
+        }, true);
     }
 
     @Test
@@ -148,8 +148,16 @@ public class OSMImportToolTest {
     }
 
     private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) throws IOException {
+        importAndAssert(name, assertions, false);
+    }
+
+    private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions, boolean tracePageCache) throws IOException {
         File osmFile = findOSMFile(name);
-        importAndAssert(name, osmFile.getName(), assertions, "--into", home.homeDirectory().getCanonicalPath(), "--database", name, osmFile.getCanonicalPath());
+        if (tracePageCache) {
+            importAndAssert(name, osmFile.getName(), assertions, "--trace-page-cache", "--into", home.homeDirectory().getCanonicalPath(), "--database", name, osmFile.getCanonicalPath());
+        } else {
+            importAndAssert(name, osmFile.getName(), assertions, "--into", home.homeDirectory().getCanonicalPath(), "--database", name, osmFile.getCanonicalPath());
+        }
     }
 
     private void importAndAssert(String[] files, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) throws IOException {

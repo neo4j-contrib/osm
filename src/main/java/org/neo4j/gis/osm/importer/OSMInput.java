@@ -813,7 +813,8 @@ public class OSMInput implements Input {
         return totalSize;
     }
 
-    public Estimates calculateEstimates(ToIntFunction<Value[]> toIntFunction) throws IOException {
+    @Override
+    public Estimates calculateEstimates(PropertySizeCalculator propertySizeCalculator) throws IOException {
         long fileSize = calcFileSize();
         return Input.knownEstimates(fileSize / BYTES_PER_NODE, fileSize / BYTES_PER_REL, 8, 1, 8, 8, 1);
     }
