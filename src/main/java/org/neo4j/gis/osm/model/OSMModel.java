@@ -173,6 +173,11 @@ public class OSMModel {
             closest.locationMaker = closest.makeLocationMaker();
         }
 
+        @Override
+        public String toString() {
+            return "OSMWayDistance[" + way + "] node[" + node + "] distance[" + closest + "]";
+        }
+
         public LocationMaker getLocationMaker() {
             return closest.getLocationMaker();
         }
@@ -307,15 +312,14 @@ public class OSMModel {
 
         @Override
         public Node process(Transaction tx) {
-            Node node;
             left.node.addLabel(Routable);
             right.node.addLabel(Routable);
-            node = tx.createNode(Routable);
+            Node node = tx.createNode(Routable);
             node.setProperty("location", point);
             createConnection(node, left.node, calculator.distance(point, left.point));
             createConnection(node, right.node, calculator.distance(point, right.point));
             createConnection(poi.node, node, this.distance);
-            System.out.println("\t\tCreating interpolated node: " + node);
+            System.out.println("\t\tCreated interpolated node: " + node);
             return node;
         }
 
@@ -521,7 +525,7 @@ public class OSMModel {
         }
 
         public boolean process(Transaction tx) {
-            System.out.println("Searching for route from OSMNode:" + fromNode + " via OSMWayNode:" + wayNode);
+            System.out.println("\tSearching for route from OSMNode:" + fromNode + " via OSMWayNode:" + wayNode);
             for (PathSegmentTree tree : findIntersections(tx, wayNode, 0)) {
                 for (PathSegment path : tree.asPathSegments()) {
                     routes.add(new IntersectionRoute(fromNode, fromRel, wayNode, path));
@@ -617,6 +621,7 @@ public class OSMModel {
             private void traverseToFirstIntersection(Transaction tx) {
                 this.distance = 0;
                 this.length = 0;
+                String logPrefix = "\t\tspatial.osm.routeIntersection(): ";
                 TraversalDescription traversalDescription = new MonoDirectionalTraversalDescription().depthFirst().relationships(OSMModel.NEXT, direction);
                 for (Path path : traversalDescription.traverse(fromWayNode)) {
                     if (path.length() > 0) {
@@ -632,7 +637,7 @@ public class OSMModel {
                                 break;
                             }
                         } else {
-                            System.out.println("spatial.osm.routeIntersection(): Missing 'distance' on " + rel);
+                            System.out.println(logPrefix + "Missing 'distance' on " + rel);
                             osmNode = null;
                             break;
                         }
@@ -640,9 +645,9 @@ public class OSMModel {
                 }
                 if (toWayNode == null) {
                     // TODO: Probably we started at the last node for this direction, so need not print anything here
-                    System.out.println("spatial.osm.routeIntersection(): No " + direction + " path found from OSMWayNode(" + fromWayNode + ")");
+                    System.out.println(logPrefix + "No " + direction + " path found from OSMWayNode(" + fromWayNode + ")");
                 } else if (osmNode == null) {
-                    System.out.println("spatial.osm.routeIntersection(): No intersection node found in " + direction + " path found from OSMWayNode(" + fromWayNode + ")");
+                    System.out.println(logPrefix + "No intersection node found in " + direction + " path found from OSMWayNode(" + fromWayNode + ")");
                 }
             }
 
@@ -678,29 +683,29 @@ public class OSMModel {
             PathSegmentTree pathSegment = new PathSegmentTree(startNode, direction);
             if (depth < maxDepth && pathSegment.process(tx)) {
                 if (previouslySeen.contains(pathSegment.osmNode)) {
-                    System.out.println("\tAlready processed potential intersection node, rejecting cyclic route: " + pathSegment.osmNode);
+                    System.out.println("\t\tAlready processed potential intersection node, rejecting cyclic route: " + pathSegment.osmNode);
                     return null;
                 }
                 previouslySeen.add(pathSegment.osmNode);
                 if (pathSegment.osmNode.hasLabel(OSMModel.Intersection)) {
-                    System.out.println("\tFound labeled intersection: " + pathSegment.osmNode);
+                    System.out.println("\t\tFound labeled intersection: " + pathSegment.osmNode);
                     return pathSegment;
                 } else {
                     ArrayList<Relationship> rels = pathSegment.nextWayRels();
                     if (rels.size() > 1) {
                         // Not a chain, but an intersection, let's stop here
                         if (addLabels) {
-                            System.out.println("\tFound unlabeled intersection (will add label and include): " + pathSegment.osmNode);
+                            System.out.println("\t\tFound unlabeled intersection (will add label and include): " + pathSegment.osmNode);
                             pathSegment.osmNode.addLabel(OSMModel.Intersection);
                             return pathSegment;
                         } else {
-                            System.out.println("\tFound unlabeled intersection (will not add label, rejecting): " + pathSegment.osmNode);
+                            System.out.println("\t\tFound unlabeled intersection (will not add label, rejecting): " + pathSegment.osmNode);
                             return null;
                         }
                     } else if (rels.size() == 1) {
                         // This is a connection in a chain, keep looking in the same direction
                         // TODO: Look in two directions (branching the chain, so needs a different storage than nextSegement)
-                        System.out.println("\tFound chain link at " + pathSegment.osmNode + ", searching further...");
+                        System.out.println("\t\tFound chain link at " + pathSegment.osmNode + ", searching further...");
                         Node nextWayNode = rels.get(0).getStartNode();
                         pathSegment.childSegments = findIntersections(tx, nextWayNode, depth + 1);
                         return pathSegment;
