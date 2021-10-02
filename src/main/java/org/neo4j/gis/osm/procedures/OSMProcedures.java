@@ -70,7 +70,7 @@ public class OSMProcedures {
                         }
                     }
                 } else {
-                    System.out.println("\tFailed to find a routes for " + routes);
+                    System.out.println("\tFailed to find routes for " + routes);
                 }
             }
             System.out.println("\tFound " + routesFound.size() + " routes from " + node);
