@@ -7,6 +7,7 @@
 // https://download.geofabrik.de/europe.html
 // https://download.geofabrik.de/europe/sweden-latest.osm.bz2
 // https://download.geofabrik.de/australia-oceania/australia-latest.osm.bz2
+// https://download.geofabrik.de/north-america/us-south-latest.osm.bz2
 
 //
 // Import data
@@ -96,6 +97,23 @@ java -Xms1024m -Xmx1024m \
 //  490590540 properties
 //Peak memory usage: 2.159GiB
 
+// For us-south and Neo4j 4.2.6 (freshly downloaded from geofabrik 2021-05-13)
+
+java -Xms1024m -Xmx1024m \
+-cp "target/osm-0.2.4-neo4j-4.2.11.jar:target/dependency/*" org.neo4j.gis.osm.OSMImportTool \
+--skip-duplicate-nodes --delete --into target/neo4j --database us-south samples/2021/us-south-latest.osm.bz2
+
+//IMPORT DONE in 4h 35m 21s 939ms. (or 1h 44m 44s 640ms on new Precision 7760)
+//Imported:
+//811499506 nodes
+//825605786 relationships
+//2416337630 properties
+//Peak memory usage: 10.07GiB
+
+//
+// Now copy the created database directories into a local installation of Neo4j itself
+//
+
 rm -Rf ~/Downloads/neo4j-enterprise-4.1.3/data/databases/sweden
 rm -Rf ~/Downloads/neo4j-enterprise-4.1.3/data/transactions/sweden
 #cp -a target/neo4j/data/databases/sweden ~/Downloads/neo4j-enterprise-4.1.3/data/databases/
@@ -106,7 +124,7 @@ for dir in databases transactions ; do for db in sweden australia ; do echo "$di
 // Then edit neo4j-conf to set default_database=sweden (or australia)
 
 // 2021 Sweden and Australia ENTERPRISE
-for dir in databases transactions ; do for db in sweden australia ; do echo "$dir/$db" ; cp -a target/neo4j/data/$dir/$db ~/Downloads/neo4j-community-4.2.3/data/$dir/ ; done ; done
+for dir in databases transactions ; do for db in sweden australia ; do echo "$dir/$db" ; cp -a target/neo4j/data/$dir/$db ~/Downloads/neo4j-enterprise-4.2.6/data/$dir/ ; done ; done
 // Then run Neo4j and `CREATE DATABASE sweden` (and repeat for australia)
 neo4j$ MATCH (n) RETURN count(n)
 --> 0
@@ -114,7 +132,7 @@ neo4j$ :use system
 system$ CREATE DATABASE sweden
 system$ CREATE DATABASE autralia
 system$ :use sweden
-sweden MATCH (n) RETURN count(n)
+sweden$ MATCH (n) RETURN count(n)
 --> 165422570
 sweden$ :use australia
 australia$ MATCH (n) RETURN count(n)
@@ -122,38 +140,66 @@ australia$ MATCH (n) RETURN count(n)
 australia$ :use sweden
 sweden$
 
+// 2021 autumn, adding us-south to the above set of sweden and australia
+for dir in databases transactions ; do for db in us-south ; do echo "$dir/$db" ; cp -a target/neo4j/data/$dir/$db ~/Downloads/neo4j-enterprise-4.2.11/data/$dir/ ; done ; done
+// Neo4j does not allow `-` character in database names
+for dir in databases transactions ; do (cd ~/Downloads/neo4j-enterprise-4.2.11/data ; mv $dir/us-south $dir/ussouth) ; done
+// Then run Neo4j and `CREATE DATABASE us-south`
+neo4j$ MATCH (n) RETURN count(n)
+--> 0
+neo4j$ :use system
+system$ CREATE DATABASE ussouth
+system$ :use ussouth
+ussouth$ MATCH (n) RETURN count(n)
+--> 811499506
+
 // Start Neo4j
 // If using community edition, first edit conf/neo4j.conf to point to the default_database of choice
+// If using enterprise edition, after starting neo4j remember to connect to the named database (in driver) or use the `:use` command in browser or cypher-shell
 
-cd ~/Downloads/neo4j-enterprise-4.1.3/
+cd ~/Downloads/neo4j-enterprise-4.2.11/
 bin/neo4j start
 
 //
 // Make indexes on :OSMTags
 //
 
-CREATE INDEX ON :OSMTags(amenity);
-CREATE INDEX ON :OSMTags(building);
-CREATE INDEX ON :OSMTags(capital);
-CREATE INDEX ON :OSMTags(description);
-CREATE INDEX ON :OSMWay(distance);
-CREATE INDEX ON :OSMRelation(distance);
-CREATE INDEX ON :OSMTags(food);
-CREATE INDEX ON :OSMTags(highway);
-CREATE INDEX ON :OSMTags(information);
-CREATE INDEX ON :OSMTags(kiosk);
-CREATE INDEX ON :Intersection(location);
-CREATE INDEX ON :Routable(location);
-CREATE INDEX ON :PointOfInterest(location);
-CREATE INDEX ON :OSMTags(location);
-CREATE INDEX ON :OSMNode(location);
-CREATE INDEX ON :PointOfInterest(name);
-CREATE INDEX ON :OSMTags(office);
-CREATE INDEX ON :OSMTags(place);
-CREATE INDEX ON :OSMTags(restaurant);
-CREATE INDEX ON :OSMTags(shop);
-CREATE INDEX ON :OSMTags(station);
-CREATE INDEX ON :OSMTags(type);
+// Amenities
+CREATE INDEX tags_amenity     IF NOT EXISTS FOR (n:OSMTags) ON (n.amenity);
+CREATE INDEX tags_building    IF NOT EXISTS FOR (n:OSMTags) ON (n.building);
+CREATE INDEX tags_capital     IF NOT EXISTS FOR (n:OSMTags) ON (n.capital);
+CREATE INDEX tags_description IF NOT EXISTS FOR (n:OSMTags) ON (n.description);
+CREATE INDEX tags_food        IF NOT EXISTS FOR (n:OSMTags) ON (n.food);
+CREATE INDEX tags_highway     IF NOT EXISTS FOR (n:OSMTags) ON (n.highway);
+CREATE INDEX tags_information IF NOT EXISTS FOR (n:OSMTags) ON (n.information);
+CREATE INDEX tags_kiosk       IF NOT EXISTS FOR (n:OSMTags) ON (n.kiosk);
+CREATE INDEX tags_office      IF NOT EXISTS FOR (n:OSMTags) ON (n.office);
+CREATE INDEX tags_place       IF NOT EXISTS FOR (n:OSMTags) ON (n.place);
+CREATE INDEX tags_restaurant  IF NOT EXISTS FOR (n:OSMTags) ON (n.restaurant);
+CREATE INDEX tags_shop        IF NOT EXISTS FOR (n:OSMTags) ON (n.shop);
+CREATE INDEX tags_station     IF NOT EXISTS FOR (n:OSMTags) ON (n.station);
+CREATE INDEX tags_type        IF NOT EXISTS FOR (n:OSMTags) ON (n.type);
+
+// Distances
+CREATE INDEX way_distance          IF NOT EXISTS FOR (n:OSMWay)      ON (n.distance);
+CREATE INDEX relation_distance     IF NOT EXISTS FOR (n:OSMRelation) ON (n.distance);
+
+// Locations
+CREATE INDEX osm_node_location     IF NOT EXISTS FOR (n:OSMNode)         ON (n.location);
+CREATE INDEX intersection_location IF NOT EXISTS FOR (n:Intersection)    ON (n.location);
+CREATE INDEX routable_location     IF NOT EXISTS FOR (n:Routable)        ON (n.location);
+CREATE INDEX poi_location          IF NOT EXISTS FOR (n:PointOfInterest) ON (n.location);
+CREATE INDEX tags_location         IF NOT EXISTS FOR (n:OSMTags)         ON (n.location);
+CREATE INDEX path_node_location    IF NOT EXISTS FOR (n:OSMPathNode)     ON (n.location);
+
+// Names
+CREATE INDEX way_name IF NOT EXISTS FOR (n:OSMWay)          ON (n.name);
+CREATE INDEX poi_name IF NOT EXISTS FOR (n:PointOfInterest) ON (n.name);
+
+// OSM ids
+CREATE INDEX relation_osm_id IF NOT EXISTS FOR (n:OSMRelation) ON (n.relation_osm_id);
+CREATE INDEX way_osm_id      IF NOT EXISTS FOR (n:OSMWay)      ON (n.way_osm_id);
+CREATE INDEX node_osm_id     IF NOT EXISTS FOR (n:OSMNode)     ON (n.node_osm_id);
 
 // For sweden on 4.1.3 This can be achieved using:
 cat indexes.txt | ~/Downloads/neo4j-community-4.1.3/bin/cypher-shell -u neo4j -p abc -d sweden
@@ -161,6 +207,9 @@ cat indexes.txt | ~/Downloads/neo4j-community-4.1.3/bin/cypher-shell -u neo4j -p
 // For sweden and australia on 4.2.6 This can be achieved using:
 cat demo/indexes.txt | ~/Downloads/neo4j-enterprise-4.2.6/bin/cypher-shell -u neo4j -p abc -d sweden
 cat demo/indexes.txt | ~/Downloads/neo4j-enterprise-4.2.6/bin/cypher-shell -u neo4j -p abc -d australias
+
+// For us-south on 4.2.11 This can be achieved using:
+cat demo/indexes.txt | ~/Downloads/neo4j-enterprise-4.2.6/bin/cypher-shell -u neo4j -p abc -d ussouth
 
 // Status of index building can be observed
 sweden$ SHOW INDEXES

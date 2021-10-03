@@ -35,6 +35,7 @@ CALL apoc.periodic.iterate(
 // Sweden 2020 had 146 683 242 (147 million) - took 146s on a freshly started database and 117s warmed up (SSD)
 // Sweden 2021 had 159 193 474 (159 million)
 // Australia 2021 had 152 684 574 (152 million)
+// US-South 2021 had 730 754 466 (731 million) - took 4445s on the 64G precision 7760
 
 MATCH (awn:OSMWayNode)-[r:NEXT]-(bwn:OSMWayNode)
 WITH CASE
@@ -42,6 +43,22 @@ WITH CASE
   ELSE 'no'
 END AS has_distance
 RETURN has_distance, COUNT(*) AS count;
+
+// A more advanced query with percentage calculations was used for us-south
+WITH 730754466 AS total
+MATCH (awn:OSMWayNode)-[r:NEXT]-(bwn:OSMWayNode)
+WITH CASE
+       WHEN exists(r.distance) THEN 'yes'
+       ELSE 'no'
+       END AS has_distance, total
+WITH has_distance, COUNT(*) AS count, total
+RETURN has_distance, count, 100*count/total AS percentage;
++---------------------------------------+
+| has_distance | count     | percentage |
++---------------------------------------+
+| "yes"        | 695617468 | 95         |
+| "no"         | 35136998  | 4          |
++---------------------------------------+
 
 //-----------------------------------------------------------------------------------------//
 // Calculate total distances for each way (chain of nodes)
@@ -175,6 +192,58 @@ CALL apoc.periodic.iterate(
 ├──────────────┼───────┤
 │"no"          │2669077│
 └──────────────┴───────┘
+
+
+// For US-South we focused on The Raleigh/Durham area, picking a point between these two cities: 35.8800193,-78.763378
+
+CALL apoc.periodic.iterate(
+'WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+ MATCH (w:OSMWay)-[:FIRST_NODE]-(n:OSMWayNode)-[:NODE]->(x:OSMNode)
+   WHERE NOT exists(w.distance)
+   AND distance(x.location,center) < 100000
+ RETURN w, n',
+'MATCH p=(n)-[:NEXT*..500]->(x)
+ WITH w, last(collect(p)) as path
+ WITH w, path, last(nodes(path)) as end
+   WHERE NOT exists((end)-[:NEXT]->())
+ WITH w, path,
+   reduce(l=0, r in relationships(path) | l+r.distance) AS distance
+ SET w.distance=distance, w.length=length(path)',
+{batchSize:100, parallel:true});
+
+// The above command processed 1506008 ways in 1881s (about 30min)
+// But according to the commands below, only 45% of these ways were given distances.
+// So we repeated it but increased the maximum distance from the center to 200km
+// and also the maximum path length from 500 to 2000. This would find 3320633 ways,
+// a little over double the number from within 100km.
+
+CALL apoc.periodic.iterate(
+'WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+ MATCH (w:OSMWay)-[:FIRST_NODE]-(n:OSMWayNode)-[:NODE]->(x:OSMNode)
+   WHERE NOT exists(w.distance)
+   AND distance(x.location,center) < 200000
+ RETURN w, n',
+'MATCH p=(n)-[:NEXT*..2000]->(x)
+ WITH w, last(collect(p)) as path
+ WITH w, path, last(nodes(path)) as end
+   WHERE NOT exists((end)-[:NEXT]->())
+ WITH w, path,
+   reduce(l=0, r in relationships(path) | l+r.distance) AS distance
+ SET w.distance=distance, w.length=length(path)',
+{batchSize:100, parallel:true});
+
+// And calculate how many ways near Raleigh/Durham have distances
+
+WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+MATCH (w:OSMWay)-[:FIRST_NODE]-(n:OSMWayNode)-[:NODE]->(x:OSMNode)
+  WHERE distance(x.location,center) < 200000
+WITH CASE
+       WHEN exists(w.distance) THEN 'yes'
+       ELSE 'no'
+       END AS has_distance
+WITH has_distance, COUNT(*) AS count
+RETURN has_distance, count, 100*count/3320633 AS percentage;
+
 
 //-----------------------------------------------------------------------------------------//
 // Finally sum the distances up the relation tree by repeatedly running to convergence:
