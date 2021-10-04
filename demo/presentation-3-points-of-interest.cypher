@@ -321,6 +321,97 @@ RETURN amenity, count;
 // │"bar;restaurant"           │1      │
 // └───────────────────────────┴───────┘
 
+// US-South 2021
+
+// ╒══════════════════════════════╤═══════╕
+// │"amenity"                     │"count"│
+// ╞══════════════════════════════╪═══════╡
+// │"restaurant"                  │51422  │
+// ├──────────────────────────────┼───────┤
+// │"fast_food"                   │40200  │
+// ├──────────────────────────────┼───────┤
+// │"cafe"                        │7088   │
+// ├──────────────────────────────┼───────┤
+// │"bar"                         │4560   │
+// ├──────────────────────────────┼───────┤
+// │"ice_cream"                   │1896   │
+// ├──────────────────────────────┼───────┤
+// │"cinema"                      │1790   │
+// ├──────────────────────────────┼───────┤
+// │"pub"                         │1666   │
+// ├──────────────────────────────┼───────┤
+// │"nightclub"                   │439    │
+// ├──────────────────────────────┼───────┤
+// │"food_court"                  │229    │
+// ├──────────────────────────────┼───────┤
+// │"biergarten"                  │79     │
+// ├──────────────────────────────┼───────┤
+// │"stripclub"                   │58     │
+// ├──────────────────────────────┼───────┤
+// │"social_club"                 │32     │
+// ├──────────────────────────────┼───────┤
+// │"internet_cafe"               │21     │
+// ├──────────────────────────────┼───────┤
+// │"clubhouse"                   │17     │
+// ├──────────────────────────────┼───────┤
+// │"restaurant;fast_food"        │4      │
+// ├──────────────────────────────┼───────┤
+// │"feeding_place"               │3      │
+// ├──────────────────────────────┼───────┤
+// │"restaurant;bar"              │3      │
+// ├──────────────────────────────┼───────┤
+// │"yacht_club"                  │2      │
+// ├──────────────────────────────┼───────┤
+// │"juice_bar"                   │2      │
+// ├──────────────────────────────┼───────┤
+// │"cafe;animal_shelter"         │2      │
+// ├──────────────────────────────┼───────┤
+// │"club"                        │2      │
+// ├──────────────────────────────┼───────┤
+// │"outdoor_cafe"                │1      │
+// ├──────────────────────────────┼───────┤
+// │"strip_club"                  │1      │
+// ├──────────────────────────────┼───────┤
+// │"diet_club"                   │1      │
+// ├──────────────────────────────┼───────┤
+// │"cafe;fast_food"              │1      │
+// ├──────────────────────────────┼───────┤
+// │"cafe;juice_bar"              │1      │
+// ├──────────────────────────────┼───────┤
+// │"cafeteria"                   │1      │
+// ├──────────────────────────────┼───────┤
+// │"ice_cream;shaved_ice"        │1      │
+// ├──────────────────────────────┼───────┤
+// │"bar;cafe"                    │1      │
+// ├──────────────────────────────┼───────┤
+// │"bar;pub;restaurant"          │1      │
+// ├──────────────────────────────┼───────┤
+// │"music_venue;cafe"            │1      │
+// ├──────────────────────────────┼───────┤
+// │"country_club"                │1      │
+// ├──────────────────────────────┼───────┤
+// │"toilets;fast_food"           │1      │
+// ├──────────────────────────────┼───────┤
+// │"health_club"                 │1      │
+// ├──────────────────────────────┼───────┤
+// │"breastfeeding_station"       │1      │
+// ├──────────────────────────────┼───────┤
+// │"restaurant,bar"              │1      │
+// ├──────────────────────────────┼───────┤
+// │"restaurant;bar;pub"          │1      │
+// ├──────────────────────────────┼───────┤
+// │"fire_station;restaurant;cafe"│1      │
+// ├──────────────────────────────┼───────┤
+// │"food_bank"                   │1      │
+// ├──────────────────────────────┼───────┤
+// │"food_court;atm;toilets"      │1      │
+// ├──────────────────────────────┼───────┤
+// │"atm;fast_food"               │1      │
+// └──────────────────────────────┴───────┘
+
+// Top for US-South:
+// "restaurant", "fast_food", "cafe", "bar", "ice_cream", "cinema", "pub", "nightclub", "food_court", "biergarten", "stripclub", "social_club", "internet_cafe", "clubhouse"
+
 //
 // Finding Points Of Interest based on a set of tags discovered above
 //
@@ -410,6 +501,26 @@ CALL apoc.periodic.iterate(
  UNWIND ["restaurant", "cafe", "fast_food", "pub", "bar", "cinema", "ice_cream", "nightclub", "licensed_club", "food_court"] AS amenity
  MATCH (x:OSMNode)-[:TAGS]->(t:OSMTags)
    WHERE t.amenity = amenity AND NOT (x)-[:ROUTE]->() AND distance(x.location, melbourne) < 100000
+ RETURN x',
+'MATCH (n:OSMPathNode) WHERE distance(n.location, x.location) < 200 WITH x, n
+ MATCH (n)<-[:NODE]-(wn:OSMWayNode)<-[:NEXT*0..10]-(:OSMWayNode)<-[:FIRST_NODE]-(w:OSMWay)-[:TAGS]->(wt:OSMTags)
+ WITH x, w, wt, min(distance(n.location, x.location)) AS distance
+   WHERE exists(wt.highway) AND NOT wt.highway STARTS WITH "primary" AND (NOT exists(wt.foot) OR NOT wt.foot = "yes")
+ WITH x, w, distance ORDER BY distance
+ WITH x, collect(w) as ways
+   CALL spatial.osm.routePointOfInterest(x,ways) YIELD node
+   SET x:PointOfInterest
+ RETURN count(node)',
+{batchSize:100, parallel:false});
+
+// For US-South 2021 we selected 14 categories (see tables above)
+// Near Durham/Raleigh (35.8800193,-78.763378)
+
+CALL apoc.periodic.iterate(
+'WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+ UNWIND ["restaurant", "fast_food", "cafe", "bar", "ice_cream", "cinema", "pub", "nightclub", "food_court", "biergarten", "stripclub", "social_club", "internet_cafe", "clubhouse" ] AS amenity
+ MATCH (x:OSMNode)-[:TAGS]->(t:OSMTags)
+   WHERE t.amenity = amenity AND NOT (x)-[:ROUTE]->() AND distance(x.location, center) < 200000
  RETURN x',
 'MATCH (n:OSMPathNode) WHERE distance(n.location, x.location) < 200 WITH x, n
  MATCH (n)<-[:NODE]-(wn:OSMWayNode)<-[:NEXT*0..10]-(:OSMWayNode)<-[:FIRST_NODE]-(w:OSMWay)-[:TAGS]->(wt:OSMTags)

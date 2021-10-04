@@ -8,7 +8,7 @@ WITH awn,bwn,r LIMIT 10000
 
 MATCH (awn)-[:NODE]->(a:OSMNode), (bwn)-[:NODE]->(b:OSMNode)
   SET r.distance=distance(a.location,b.location)
-RETURN count(*);
+RETURN COUNT(*);
 
 // Neo4j 3.5.9 Batch results:
 // Doing the same iteratively in batches of 10k
@@ -219,7 +219,7 @@ CALL apoc.periodic.iterate(
 
 CALL apoc.periodic.iterate(
 'WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
- MATCH (w:OSMWay)-[:FIRST_NODE]-(n:OSMWayNode)-[:NODE]->(x:OSMNode)
+ MATCH (w:OSMWay)-[:FIRST_NODE]->(n:OSMWayNode)-[:NODE]->(x:OSMNode)
    WHERE NOT exists(w.distance)
    AND distance(x.location,center) < 200000
  RETURN w, n',
@@ -243,6 +243,77 @@ WITH CASE
        END AS has_distance
 WITH has_distance, COUNT(*) AS count
 RETURN has_distance, count, 100*count/3320633 AS percentage;
+
+//+-------------------------------------+
+//| has_distance | count   | percentage |
+//+-------------------------------------+
+//| "yes"        | 1704798 | 51         |
+//| "no"         | 1615835 | 48         |
+//+-------------------------------------+
+
+// Now try filter to only ways with the highway tag
+
+WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+MATCH (wt:OSMTags)<-[:TAGS]-(w:OSMWay)-[:FIRST_NODE]->(n:OSMWayNode)-[:NODE]->(x:OSMNode)
+  WHERE distance(x.location,center) < 200000 AND exists(wt.highway)
+WITH CASE
+       WHEN exists(w.distance) THEN 'yes'
+       ELSE 'no'
+       END AS has_distance
+WITH has_distance, COUNT(*) AS count
+RETURN has_distance, count, 100*count/1305509 AS percentage;
+
+//+-------------------------------------+
+//| has_distance | count   | percentage |
+//+-------------------------------------+
+//| "yes"        | 1260646 | 96         |
+//| "no"         | 44863   | 3          |
+//+-------------------------------------+
+
+// Now we use the highway filtering to find paths 500km away
+
+CALL apoc.periodic.iterate(
+'WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+ MATCH (wt:OSMTags)<-[:TAGS]-(w:OSMWay)-[:FIRST_NODE]->(n:OSMWayNode)-[:NODE]->(x:OSMNode)
+   WHERE NOT exists(w.distance) AND exists(wt.highway)
+   AND distance(x.location,center) < 500000
+ RETURN w, n',
+'MATCH p=(n)-[:NEXT*..2000]->(x)
+ WITH w, last(collect(p)) as path
+ WITH w, path, last(nodes(path)) as end
+   WHERE NOT exists((end)-[:NEXT]->())
+ WITH w, path,
+   reduce(l=0, r in relationships(path) | l+r.distance) AS distance
+ SET w.distance=distance, w.length=length(path)',
+{batchSize:100, parallel:true});
+
+// And see how successful it was
+
+//Before:
+//+-------------------------------------+
+//| has_distance | count   | percentage |
+//+-------------------------------------+
+//| "no"         | 3422178 | 73         |
+//| "yes"        | 1260646 | 26         |
+//+-------------------------------------+
+
+WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+MATCH (wt:OSMTags)<-[:TAGS]-(w:OSMWay)-[:FIRST_NODE]->(n:OSMWayNode)-[:NODE]->(x:OSMNode)
+  WHERE distance(x.location,center) < 500000 AND exists(wt.highway)
+WITH CASE
+       WHEN exists(w.distance) THEN 'yes'
+       ELSE 'no'
+       END AS has_distance
+WITH has_distance, COUNT(*) AS count
+RETURN has_distance, count, 100*count/4682824 AS percentage;
+
+//After:
+//+-------------------------------------+
+//| has_distance | count   | percentage |
+//+-------------------------------------+
+//| "yes"        | 4518831 | 96         |
+//| "no"         | 163993  | 3          |
+//+-------------------------------------+
 
 
 //-----------------------------------------------------------------------------------------//
@@ -268,6 +339,17 @@ WITH r, sum(m.distance) AS distance SET r.distance = distance;
 //    Set 115 properties, completed after 9 ms.
 //    Set 5 properties, completed after 5 ms.
 
+// US-South 2021
+//    Set 45304 properties, completed after 32929 ms.
+//    Set 378 properties, completed after 1242 ms.
+//    Set 208 properties, completed after 1170 ms.
+//    Set 738 properties, completed after 1153 ms.
+//    Set 204 properties, completed after 1134 ms.
+//    Set 364 properties, completed after 1074 ms.
+//    Set 4 properties, completed after 1085 ms.
+//    Set 2 properties, completed after 1056 ms.
+//    Set 3 properties, completed after 1067 ms.
+
 // For Australia 2021 we also checked the number of relations with distance:
 
 MATCH (r:OSMRelation)
@@ -284,3 +366,23 @@ RETURN has_distance, COUNT(*) AS count;
 ├──────────────┼───────┤
 │"no"          │23568  │
 └──────────────┴───────┘
+
+// For Australia 2021 we also checked the number of relations with distance:
+
+MATCH (r:OSMRelation)
+WITH CASE
+       WHEN exists(r.distance) THEN 'yes'
+       ELSE 'no'
+       END AS has_distance
+RETURN has_distance, COUNT(*) AS count;
+
+//+-----------------------+
+//| has_distance | count  |
+//+-----------------------+
+//| "no"         | 209024 |
+//| "yes"        | 47205  |
+//+-----------------------+
+
+// Less than 25% of the relations have distance because the total dataset covers a much larger
+// area than the Durham/Raleigh area focused on in the distance calculations above
+// and the fact that for the last few queries we only added distances to roads.

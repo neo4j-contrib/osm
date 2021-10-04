@@ -37,6 +37,9 @@ CALL apoc.periodic.iterate(
 // On Sweden 2020 it took 269s to mark 14680965 (14M) OSMPathNodes
 // On Sweden 2021 it took 532s to mark 16038570 (16M) OSMPathNodes
 // On Australia 2021 it took 329s to mark 21009183 (21M) OSMPathNodes
+// On US-South 2021 it took 1638s to mark 127514561 (128M) OSMPathNodes (36%)
 
+// These indexes are covered in the import section and the indexes.txt file.
+// Can be deleted from here...
 CREATE INDEX ON :OSMPathNode(location);
 CREATE INDEX ON :OSMNode(location);
