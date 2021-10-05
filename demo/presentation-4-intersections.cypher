@@ -37,6 +37,7 @@ MATCH (i:Intersection) RETURN 'Intersections' AS type, count(i);
 // San Francisco took 16s to produce 53744 Intersections
 // Sweden 2021 took 733s to produce 1949128 (2m) intersections
 // Australia 2021 took 725s to produce 2463855 (2.5m) intersections
+// US-South 2021 took 1219s to produce 17195001 (17m) intersections
 
 // San Francisco
 //╒════════════════════╤══════════╕
@@ -101,6 +102,19 @@ MATCH (i:Intersection) RETURN 'Intersections' AS type, count(i);
 // │"Points of interest"│28668     │ - Needed to do a periodic iterate in bash, since `spatial.osm.routePointOfInterest` does not work inside `apoc.periodic.iterate` on Neo4j 4.x
 // ├────────────────────┼──────────┤
 // │"Intersections"     │2463855   │
+// └────────────────────┴──────────┘
+
+// US-South 2021
+// ╒════════════════════╤══════════╕
+// │"type"              │"count(i)"│
+// ╞════════════════════╪══════════╡
+// │"OSM Nodes"         │353623762 │
+// ├────────────────────┼──────────┤
+// │"Nodes on paths"    │127514561 │
+// ├────────────────────┼──────────┤
+// │"Points of interest"│42242     │ - This seems to have worked in osm for Neo4j 4.2.11, somehow - we should double-check in the demo
+// ├────────────────────┼──────────┤
+// │"Intersections"     │17195001  │
 // └────────────────────┴──────────┘
 
 // During Sweden 2019 we needed to reduce the scope to get this to work
@@ -200,6 +214,7 @@ CALL apoc.periodic.iterate(
 // SF took 16s to do 1538 committed operations
 // Sweden 2021 took 38s to create 23656 relationships and set 118280 properties
 // Australia 2021 took 28s to create 41560 relationships and set 207800 properties
+// US-South 2021 took 3600s to create 48489495 relationships and set 242447475 properties
 
 // The algorithm makes self relationships, so delete with
 
