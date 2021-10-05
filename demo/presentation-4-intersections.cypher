@@ -220,10 +220,12 @@ CALL apoc.periodic.iterate(
 
 MATCH (a:Intersection)-[r:ROUTE]->(a) DELETE r RETURN COUNT(*);
 
+// TODO: We should really fix the bug that makes self-relationships
 // SF had a 402 self relationships
 // Sweden 2020 had 447 self relationships
 // Sweden 2021 had 11853 self relationships
 // Australia 2021 had 11302 self relationships
+// US-South 2021 had 68144 self relationships
 
 // Now to get an idea of the distribution of route distances
 
@@ -298,8 +300,46 @@ MATCH (a:Intersection)-[r:ROUTE]->() WHERE r.distance > 5000 RETURN '>5000m' AS 
 // │">5000m"    │56076  │
 // └────────────┴───────┘
 
+// US-South 2021 (before removing self relationships)
+// ╒════════════╤════════╕
+// │"type"      │"count" │
+// ╞════════════╪════════╡
+// │"All routes"│24487369│
+// ├────────────┼────────┤
+// │">25m"      │18291306│
+// ├────────────┼────────┤
+// │">50m"      │14533908│
+// ├────────────┼────────┤
+// │">100m"     │9254742 │
+// ├────────────┼────────┤
+// │">250m"     │3842790 │
+// ├────────────┼────────┤
+// │">500m"     │1788500 │
+// ├────────────┼────────┤
+// │">5000m"    │33184   │
+// └────────────┴────────┘
+
+// US-South 2021 (after removing self relationships)
+// ╒════════════╤════════╕
+// │"type"      │"count" │
+// ╞════════════╪════════╡
+// │"All routes"│24419225│
+// ├────────────┼────────┤
+// │">25m"      │18223724│
+// ├────────────┼────────┤
+// │">50m"      │14467354│
+// ├────────────┼────────┤
+// │">100m"     │9197591 │
+// ├────────────┼────────┤
+// │">250m"     │3815385 │
+// ├────────────┼────────┤
+// │">500m"     │1774087 │
+// ├────────────┼────────┤
+// │">5000m"    │31171   │
+// └────────────┴────────┘
+
 // To improve inner-city routing we can optionally remove some of the longer ones which might be falsely detected
 
 MATCH (a:Intersection)-[r:ROUTE]->() WHERE r.distance > 500 DELETE r RETURN COUNT(*);
 
-// Did not run this on Sweden 2021 or Australia 2021
+// Did not run this on Sweden 2021 or Australia 2021 or US-South 2021
