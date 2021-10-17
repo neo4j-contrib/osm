@@ -533,6 +533,38 @@ CALL apoc.periodic.iterate(
  RETURN count(node)',
 {batchSize:100, parallel:false});
 
+// The above calculation leads to routing graphs that include footways. This is because the condition:
+//   AND (NOT exists(wt.foot) OR NOT wt.foot = "yes")
+// was designed to work with other datasets, and did not work in Durham where it is common to mark footways
+// with 'highway'='footway' and 'footway'='sidewalk'.
+// A better condition might be:
+//   WHERE exists(wt.highway) AND NOT wt.highway STARTS WITH "primary"
+//   AND (NOT exists(wt.foot) OR wt.foot = "no") AND NOT exists(wt.footway)
+
+// We need to remove all created POI routes to intersections and re-create them:
+
+MATCH (p:PointOfInterest)-[:ROUTE]->(n:Routable) WHERE NOT n:OSMNode DETACH DELETE n RETURN count(n)
+
+// Re-create the POI routable graph with better restrictions
+
+CALL apoc.periodic.iterate(
+'WITH point({latitude:35.8800193,longitude:-78.763378}) AS center
+ UNWIND ["restaurant", "fast_food", "cafe", "bar", "ice_cream", "cinema", "pub", "nightclub", "food_court", "biergarten", "stripclub", "social_club", "internet_cafe", "clubhouse" ] AS amenity
+ MATCH (x:OSMNode)-[:TAGS]->(t:OSMTags)
+   WHERE t.amenity = amenity AND NOT (x)-[:ROUTE]->() AND distance(x.location, center) < 200000
+ RETURN x',
+'MATCH (n:OSMPathNode) WHERE distance(n.location, x.location) < 200 WITH x, n
+ MATCH (n)<-[:NODE]-(wn:OSMWayNode)<-[:NEXT*0..10]-(:OSMWayNode)<-[:FIRST_NODE]-(w:OSMWay)-[:TAGS]->(wt:OSMTags)
+ WITH x, w, wt, min(distance(n.location, x.location)) AS distance
+   WHERE exists(wt.highway) AND NOT wt.highway STARTS WITH "primary"
+   AND (NOT exists(wt.foot) OR wt.foot = "no") AND NOT exists(wt.footway)
+ WITH x, w, distance ORDER BY distance
+ WITH x, collect(w) as ways
+   CALL spatial.osm.routePointOfInterest(x,ways) YIELD node
+   SET x:PointOfInterest
+ RETURN count(node)',
+{batchSize:100, parallel:false});
+
 // The routing code does not put lat/lon on interpolated nodes, and A-Star needs these
 
 MATCH (r:Routable) WHERE exists(r.location) AND NOT exists(r.lat)

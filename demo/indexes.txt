@@ -5,6 +5,8 @@ CREATE INDEX tags_capital     IF NOT EXISTS FOR (n:OSMTags) ON (n.capital);
 CREATE INDEX tags_description IF NOT EXISTS FOR (n:OSMTags) ON (n.description);
 CREATE INDEX tags_food        IF NOT EXISTS FOR (n:OSMTags) ON (n.food);
 CREATE INDEX tags_highway     IF NOT EXISTS FOR (n:OSMTags) ON (n.highway);
+CREATE INDEX tags_footway     IF NOT EXISTS FOR (n:OSMTags) ON (n.footway);
+CREATE INDEX tags_foot        IF NOT EXISTS FOR (n:OSMTags) ON (n.foot);
 CREATE INDEX tags_information IF NOT EXISTS FOR (n:OSMTags) ON (n.information);
 CREATE INDEX tags_kiosk       IF NOT EXISTS FOR (n:OSMTags) ON (n.kiosk);
 CREATE INDEX tags_office      IF NOT EXISTS FOR (n:OSMTags) ON (n.office);
