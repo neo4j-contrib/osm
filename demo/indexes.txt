@@ -31,6 +31,7 @@ CREATE INDEX way_name IF NOT EXISTS FOR (n:OSMWay)          ON (n.name);
 CREATE INDEX poi_name IF NOT EXISTS FOR (n:PointOfInterest) ON (n.name);
 
 // OSM ids
-CREATE INDEX relation_osm_id IF NOT EXISTS FOR (n:OSMRelation) ON (n.relation_osm_id);
-CREATE INDEX way_osm_id      IF NOT EXISTS FOR (n:OSMWay)      ON (n.way_osm_id);
-CREATE INDEX node_osm_id     IF NOT EXISTS FOR (n:OSMNode)     ON (n.node_osm_id);
+CREATE INDEX relation_osm_id IF NOT EXISTS FOR (n:OSMRelation)  ON (n.relation_osm_id);
+CREATE INDEX way_osm_id      IF NOT EXISTS FOR (n:OSMWay)       ON (n.way_osm_id);
+CREATE INDEX node_osm_id     IF NOT EXISTS FOR (n:OSMNode)      ON (n.node_osm_id);
+CREATE INDEX node_osm_id     IF NOT EXISTS FOR (n:PointOfIndex) ON (n.node_osm_id);
