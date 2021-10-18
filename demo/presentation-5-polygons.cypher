@@ -47,6 +47,84 @@ MATCH (r:OSMRelation)
 CALL spatial.osm.property.createPolygon(r)
 RETURN r.name;
 
+// For US-South 2021
+
+// Find the states with: (30 states found)
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="4" AND t.type="boundary"
+RETURN r.name, r.relation_osm_id, t.name, t.admin_level;
+
+// Find the counties with: (1466 counties found)
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="6" AND t.type="boundary"
+  AND (t.border_type="county" OR t.place="county" OR t.name ENDS WITH "County")
+RETURN r.name, r.relation_osm_id, t.name, t.admin_level, t.is_in, t.border_type, t.place, t.boundary;
+
+// Find the cities with: (39 cities found)
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="6" AND t.type="boundary"
+  AND (t.border_type="city" OR t.place="city")
+RETURN r.name, r.relation_osm_id, t.name, t.admin_level, t.is_in, t.border_type, t.place, t.boundary;
+
+// Create polygons for Cities:
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="6" AND t.type="boundary"
+  AND (t.border_type="city" OR t.place="city")
+WITH r.relation_osm_id AS osm_id
+MATCH (r:OSMRelation)
+  WHERE r.relation_osm_id=osm_id
+CALL spatial.osm.graph.createPolygon(r)
+RETURN r.name, count(*) AS polygons;
+
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="6" AND t.type="boundary"
+  AND (t.border_type="city" OR t.place="city")
+WITH r.relation_osm_id AS osm_id
+MATCH (r:OSMRelation)
+  WHERE r.relation_osm_id=osm_id
+CALL spatial.osm.property.createPolygon(r) YIELD node_id, count
+RETURN r.name, count(node_id) AS polygons;
+
+// Create polygons for states:
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="4" AND t.type="boundary"
+WITH r.relation_osm_id AS osm_id
+MATCH (r:OSMRelation)
+  WHERE r.relation_osm_id=osm_id
+CALL spatial.osm.graph.createPolygon(r)
+RETURN r.name, count(*) AS polygons;
+
+// Some states were not closed polygons, so we need to filter out PolyLine structures
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="4" AND t.type="boundary"
+  AND exists((r)-[:POLYGON_STRUCTURE]->())
+WITH r.relation_osm_id AS osm_id
+MATCH (r:OSMRelation)
+  WHERE r.relation_osm_id=osm_id
+CALL spatial.osm.property.createPolygon(r) YIELD node_id, count
+RETURN r.name, count(node_id) AS polygons;
+
+// Finally create the polygons for counties
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="6" AND t.type="boundary"
+  AND (t.border_type="county" OR t.place="county" OR t.name ENDS WITH "County")
+WITH r.relation_osm_id AS osm_id
+MATCH (r:OSMRelation)
+  WHERE r.relation_osm_id=osm_id
+CALL spatial.osm.graph.createPolygon(r)
+RETURN r.name, count(*) AS polygons;
+
+// And build the point[] caches
+MATCH (r:OSMRelation)-[:TAGS]->(t:OSMTags)
+  WHERE t.admin_level="6" AND t.type="boundary"
+  AND (t.border_type="county" OR t.place="county" OR t.name ENDS WITH "County")
+  AND exists((r)-[:POLYGON_STRUCTURE]->())
+WITH r.relation_osm_id AS osm_id
+MATCH (r:OSMRelation)
+  WHERE r.relation_osm_id=osm_id
+CALL spatial.osm.property.createPolygon(r) YIELD node_id, count
+RETURN r.name, count(node_id) AS polygons;
+
 // Older point[] instructions below:
 //
 // Create polygon for Manhattan
