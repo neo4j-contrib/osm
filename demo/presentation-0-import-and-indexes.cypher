@@ -105,9 +105,9 @@ java -Xms1024m -Xmx1024m \
 
 //IMPORT DONE in 4h 35m 21s 939ms. (or 1h 44m 44s 640ms on new Precision 7760)
 //Imported:
-//811499506 nodes
-//825605786 relationships
-//2416337630 properties
+//  811499506 nodes
+//  825605786 relationships
+//  2416337630 properties
 //Peak memory usage: 10.07GiB
 
 //
