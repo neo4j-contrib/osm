@@ -34,8 +34,12 @@ import org.neo4j.kernel.impl.transaction.log.files.TransactionLogInitializer;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.internal.Version;
 import org.neo4j.kernel.lifecycle.LifeSupport;
+import org.neo4j.logging.Level;
 import org.neo4j.logging.internal.LogService;
-import org.neo4j.logging.internal.StoreLogService;
+import org.neo4j.logging.internal.SimpleLogService;
+import org.neo4j.logging.log4j.Log4jLogProvider;
+import org.neo4j.logging.log4j.LogConfig;
+import org.neo4j.logging.log4j.Neo4jLoggerContext;
 import org.neo4j.memory.EmptyMemoryTracker;
 import org.neo4j.scheduler.JobScheduler;
 
@@ -44,6 +48,7 @@ import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -178,7 +183,7 @@ public class OSMImportTool {
 
         void printUsage(PrintStream out) {
             out.println(argument() + spaceInBetweenArgumentAndUsage() + usage);
-            for (String line : Args.splitLongLine(descriptionWithDefaultValue().replace("`", ""), 80)) {
+            for (String line : splitLongLine(descriptionWithDefaultValue().replace("`", ""), 80)) {
                 out.println("\t" + line);
             }
         }
@@ -271,22 +276,22 @@ public class OSMImportTool {
         try (FileSystemAbstraction fs = new DefaultFileSystemAbstraction()) {
             File homeDir = args.interpretOption(Options.HOME_DIR.key(), Converters.mandatory(), Converters.toFile(), DIRECTORY_IS_WRITABLE);
             homeDir.mkdirs();
-            var homeLayout = Neo4jLayout.of(homeDir);
+            var homeLayout = Neo4jLayout.of(homeDir.toPath());
             var databaseName = args.get(Options.DB_NAME.key(), "osm");
             var databaseLayout = homeLayout.databaseLayout(databaseName);
             boolean deleteDb = args.getBoolean(Options.DELETE_DB.key(), Boolean.FALSE, Boolean.TRUE);
             if (deleteDb) {
-                FileUtils.deleteRecursively(databaseLayout.databaseDirectory());
-                FileUtils.deleteRecursively(databaseLayout.getTransactionLogsDirectory());
+                FileUtils.deleteDirectory(databaseLayout.databaseDirectory());
+                FileUtils.deleteDirectory(databaseLayout.getTransactionLogsDirectory());
             }
             Config config = Config.defaults(GraphDatabaseSettings.neo4j_home, Path.of(homeDir.getAbsolutePath()));
             Path logsDir = config.get(GraphDatabaseSettings.logs_directory);
-            fs.mkdirs(logsDir.toFile());
+            fs.mkdirs(logsDir);
 
             skipBadEntriesLogging = args.getBoolean(Options.SKIP_BAD_ENTRIES_LOGGING.key(), (Boolean) Options.SKIP_BAD_ENTRIES_LOGGING.defaultValue(), false);
             if (!skipBadEntriesLogging) {
                 badFile = new File(homeDir, BAD_FILE_NAME);
-                badOutput = new BufferedOutputStream(fs.openAsOutputStream(badFile, false));
+                badOutput = new BufferedOutputStream(fs.openAsOutputStream(badFile.toPath(), false));
             }
             OSMRange range = args.interpretOption(Options.RANGE.key(), Converters.optional(), Converters.toRange(), RANGE_IS_VALID);
             osmFiles = args.orphansAsArray();
@@ -307,7 +312,7 @@ public class OSMImportTool {
 
             Collector badCollector = getBadCollector(badTolerance, skipBadRelationships, skipDuplicateNodes, skipBadEntriesLogging, badOutput);
 
-            dbConfig = loadDbConfig(args.interpretOption(Options.ADDITIONAL_CONFIG.key(), Converters.optional(), Converters.toFile(), Validators.REGEX_FILE_EXISTS));
+            dbConfig = loadDbConfig(args.interpretOption(Options.ADDITIONAL_CONFIG.key(), Converters.optional(), Converters.toFile(), f -> Validators.REGEX_FILE_EXISTS.validate(f.getAbsolutePath())));
             boolean allowCacheOnHeap = args.getBoolean(Options.CACHE_ON_HEAP.key(), (Boolean) Options.CACHE_ON_HEAP.defaultValue());
             configuration = importConfiguration(processors, defaultSettingsSuitableForTests, maxMemory, homeDir, allowCacheOnHeap, defaultHighIO);
             in = defaultSettingsSuitableForTests ? new ByteArrayInputStream(EMPTY_BYTE_ARRAY) : System.in;
@@ -392,7 +397,8 @@ public class OSMImportTool {
 
         Config config = Config.newBuilder().fromConfig(dbConfig).set(logs_directory, Path.of(logsDir.getCanonicalPath())).build();
         Path internalLogFile = config.get(store_internal_log_path);
-        LogService logService = life.add(StoreLogService.withInternalLog(internalLogFile.toFile()).build(fs));
+        Neo4jLoggerContext ctx = LogConfig.createBuilder(fs, internalLogFile, Level.INFO).build();
+        LogService logService = life.add(new SimpleLogService(new Log4jLogProvider(ctx)));
         final JobScheduler jobScheduler = life.add(createScheduler());
 
         life.start();
@@ -448,7 +454,7 @@ public class OSMImportTool {
             }
 
             if (!success) {
-                err.println("WARNING Import failed. The store files in " + databaseLayout.databaseDirectory().getAbsolutePath() +
+                err.println("WARNING Import failed. The store files in " + databaseLayout.databaseDirectory().toAbsolutePath() +
                         " are left as they are, although they are likely in an unusable state. " +
                         "Starting a database on these store files will likely fail or observe inconsistent records so " +
                         "start at your own risk or delete the store manually");
@@ -567,10 +573,10 @@ public class OSMImportTool {
     }
 
     private static Config loadDbConfig(File file) {
-        return file != null && file.exists() ? Config.newBuilder().fromFile(file).build() : Config.defaults();
+        return file != null && file.exists() ? Config.newBuilder().fromFile(file.toPath()).build() : Config.defaults();
     }
 
-    private static void printOverview(File storeDir, String[] osmFiles, org.neo4j.internal.batchimport.Configuration configuration, PrintStream out) {
+    private static void printOverview(Path storeDir, String[] osmFiles, org.neo4j.internal.batchimport.Configuration configuration, PrintStream out) {
         out.println("Neo4j version: " + Version.getNeo4jVersion());
         out.println("Importing the contents of these OSM files into " + storeDir + ":");
         for (String file : osmFiles) {
@@ -593,7 +599,7 @@ public class OSMImportTool {
 
     private static void printUsage(PrintStream out) {
         out.println("Neo4j OpenStreetMap Import Tool");
-        for (String line : Args.splitLongLine("osm-import is used to create a new Neo4j database from data in OSM XML files.", 80)) {
+        for (String line : splitLongLine("osm-import is used to create a new Neo4j database from data in OSM XML files.", 80)) {
             out.println("\t" + line);
         }
         out.println("Usage:");
@@ -637,6 +643,47 @@ public class OSMImportTool {
             // As long as the the operations manual is single-page we only use the anchor.
             return page + "#" + anchor.anchor;
         }
+    }
+
+    /*
+     * Copied from org.neo4j.internal.helpers.Args, which had this method up to Neo4j 4.1, but removed in 4.2.
+     */
+    public static String[] splitLongLine( String description, int maxLength )
+    {
+        List<String> lines = new ArrayList<>();
+        while ( !description.isEmpty() )
+        {
+            String line = description.substring( 0, Math.min( maxLength, description.length() ) );
+            int position = line.indexOf( '\n' );
+            if ( position > -1 )
+            {
+                line = description.substring( 0, position );
+                lines.add( line );
+                description = description.substring( position );
+                if ( !description.isEmpty() )
+                {
+                    description = description.substring( 1 );
+                }
+            }
+            else
+            {
+                position = description.length() > maxLength ?
+                        findSpaceBefore( description, maxLength ) : description.length();
+                line = description.substring( 0, position );
+                lines.add( line );
+                description = description.substring( position );
+            }
+        }
+        return lines.toArray( new String[0] );
+    }
+
+    private static int findSpaceBefore( String description, int position )
+    {
+        while ( !Character.isWhitespace( description.charAt( position ) ) )
+        {
+            position--;
+        }
+        return position + 1;
     }
 
     private enum Anchor {
