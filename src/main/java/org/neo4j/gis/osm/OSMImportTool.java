@@ -44,6 +44,7 @@ import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
@@ -178,7 +179,7 @@ public class OSMImportTool {
 
         void printUsage(PrintStream out) {
             out.println(argument() + spaceInBetweenArgumentAndUsage() + usage);
-            for (String line : Args.splitLongLine(descriptionWithDefaultValue().replace("`", ""), 80)) {
+            for (String line : splitLongLine(descriptionWithDefaultValue().replace("`", ""), 80)) {
                 out.println("\t" + line);
             }
         }
@@ -307,7 +308,7 @@ public class OSMImportTool {
 
             Collector badCollector = getBadCollector(badTolerance, skipBadRelationships, skipDuplicateNodes, skipBadEntriesLogging, badOutput);
 
-            dbConfig = loadDbConfig(args.interpretOption(Options.ADDITIONAL_CONFIG.key(), Converters.optional(), Converters.toFile(), Validators.REGEX_FILE_EXISTS));
+            dbConfig = loadDbConfig(args.interpretOption(Options.ADDITIONAL_CONFIG.key(), Converters.optional(), Converters.toFile(), f -> Validators.REGEX_FILE_EXISTS.validate(f.getAbsolutePath())));
             boolean allowCacheOnHeap = args.getBoolean(Options.CACHE_ON_HEAP.key(), (Boolean) Options.CACHE_ON_HEAP.defaultValue());
             configuration = importConfiguration(processors, defaultSettingsSuitableForTests, maxMemory, homeDir, allowCacheOnHeap, defaultHighIO);
             in = defaultSettingsSuitableForTests ? new ByteArrayInputStream(EMPTY_BYTE_ARRAY) : System.in;
@@ -593,7 +594,7 @@ public class OSMImportTool {
 
     private static void printUsage(PrintStream out) {
         out.println("Neo4j OpenStreetMap Import Tool");
-        for (String line : Args.splitLongLine("osm-import is used to create a new Neo4j database from data in OSM XML files.", 80)) {
+        for (String line : splitLongLine("osm-import is used to create a new Neo4j database from data in OSM XML files.", 80)) {
             out.println("\t" + line);
         }
         out.println("Usage:");
@@ -637,6 +638,47 @@ public class OSMImportTool {
             // As long as the the operations manual is single-page we only use the anchor.
             return page + "#" + anchor.anchor;
         }
+    }
+
+    /*
+     * Copied from org.neo4j.internal.helpers.Args, which had this method up to Neo4j 4.1, but removed in 4.2.
+     */
+    public static String[] splitLongLine( String description, int maxLength )
+    {
+        List<String> lines = new ArrayList<>();
+        while ( !description.isEmpty() )
+        {
+            String line = description.substring( 0, Math.min( maxLength, description.length() ) );
+            int position = line.indexOf( '\n' );
+            if ( position > -1 )
+            {
+                line = description.substring( 0, position );
+                lines.add( line );
+                description = description.substring( position );
+                if ( !description.isEmpty() )
+                {
+                    description = description.substring( 1 );
+                }
+            }
+            else
+            {
+                position = description.length() > maxLength ?
+                        findSpaceBefore( description, maxLength ) : description.length();
+                line = description.substring( 0, position );
+                lines.add( line );
+                description = description.substring( position );
+            }
+        }
+        return lines.toArray( new String[0] );
+    }
+
+    private static int findSpaceBefore( String description, int position )
+    {
+        while ( !Character.isWhitespace( description.charAt( position ) ) )
+        {
+            position--;
+        }
+        return position + 1;
     }
 
     private enum Anchor {
