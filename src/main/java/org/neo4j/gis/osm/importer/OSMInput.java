@@ -17,7 +17,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
-import java.util.function.ToIntFunction;
 
 import static org.neo4j.gis.spatial.SpatialConstants.*;
 
@@ -31,17 +30,14 @@ public class OSMInput implements Input {
     private final Group tagsGroup;
     private final Group miscGroup;
     private final RangeFilter range;
-    private final FileSystemAbstraction fs;
 
     // This uses an internal API of Neo4j, which could be a compatibility issue moving forward
     // Two options: get Neo4j to make this public, or we create our own version here. The
     // CRS is easy, but the calculator is less so.
-    private final CoordinateReferenceSystem wgs84 = CoordinateReferenceSystem.WGS84;
-    private final CRSCalculator calculator = wgs84.getCalculator();
+    private final CoordinateReferenceSystem wgs84 = CoordinateReferenceSystem.WGS_84;
     private final Configuration config;
 
     public OSMInput(FileSystemAbstraction fs, String[] osmFiles, Configuration config, RangeFilter range) {
-        this.fs = fs;
         this.osmFiles = osmFiles;
         this.config = config;
         this.range = range;

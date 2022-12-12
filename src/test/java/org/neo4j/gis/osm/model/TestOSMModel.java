@@ -102,7 +102,7 @@ public class TestOSMModel extends OSMModel {
     }
 
     private OSMModel.OSMWay makeWay(String name, OSMModel.LocatedNode... nodes) {
-        CRSCalculator calculator = CoordinateReferenceSystem.WGS84.getCalculator();
+        CRSCalculator calculator = CoordinateReferenceSystem.WGS_84.getCalculator();
         Node wayNode = tx.createNode(OSMModel.OSMWay);
         wayNode.setProperty("name", name);
         Node tags = tx.createNode(OSMModel.OSMTags);
@@ -127,7 +127,7 @@ public class TestOSMModel extends OSMModel {
     }
 
     public OSMModel.LocatedNode makeNode(double... coords) {
-        PointValue point = Values.pointValue(CoordinateReferenceSystem.WGS84, coords);
+        PointValue point = Values.pointValue(CoordinateReferenceSystem.WGS_84, coords);
         OSMModel.LocatedNode located = nodes.get(point);
         if (located == null) {
             Node node = tx.createNode(OSMModel.Routable);

@@ -204,7 +204,7 @@ public class OSMImportToolTest {
     private void assertImportedCorrectly(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
         // We are testing against community, and that cannot have multiple databases
         DatabaseManagementService databases = new TestDatabaseManagementServiceBuilder(home)
-                .setConfig(GraphDatabaseSettings.default_database, name)
+                .setConfig(GraphDatabaseSettings.initial_default_database, name)
                 .setConfig(GraphDatabaseSettings.fail_on_missing_files, false).build();
         GraphDatabaseService db = databases.database(name);
         Map<String, Long> stats = debugOSMModel(db);

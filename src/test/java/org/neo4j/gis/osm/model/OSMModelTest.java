@@ -14,17 +14,17 @@ public class OSMModelTest {
     @Test
     public void shouldCalculateAnglesInTriangle() {
         PointValue[] left = new PointValue[]{
-                Values.pointValue(CoordinateReferenceSystem.Cartesian, 0, 0),
-                Values.pointValue(CoordinateReferenceSystem.Cartesian, 0, 0)
+                Values.pointValue(CoordinateReferenceSystem.CARTESIAN, 0, 0),
+                Values.pointValue(CoordinateReferenceSystem.CARTESIAN, 0, 0)
         };
         PointValue[] right = new PointValue[]{
-                Values.pointValue(CoordinateReferenceSystem.Cartesian, 10, 0),
-                Values.pointValue(CoordinateReferenceSystem.Cartesian, 10, -10)
+                Values.pointValue(CoordinateReferenceSystem.CARTESIAN, 10, 0),
+                Values.pointValue(CoordinateReferenceSystem.CARTESIAN, 10, -10)
         };
         for (int x = 10; x >= -10; x--) {
             PointValue[] apex = new PointValue[]{
-                    Values.pointValue(CoordinateReferenceSystem.Cartesian, x, 10),
-                    Values.pointValue(CoordinateReferenceSystem.Cartesian, 10 + x, 10 - x)
+                    Values.pointValue(CoordinateReferenceSystem.CARTESIAN, x, 10),
+                    Values.pointValue(CoordinateReferenceSystem.CARTESIAN, 10 + x, 10 - x)
             };
             double[] leftAngle = new double[apex.length];
             double[] rightAngle = new double[apex.length];
