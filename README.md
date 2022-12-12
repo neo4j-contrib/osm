@@ -35,10 +35,10 @@ This will run all tests which involves importing some OSM files. If you want to 
 
 The build will produce two jars and copy them to the local maven repository:
 
-* `target/osm-0.2.5-neo4j-4.4.14.jar` is aimed to be used as a dependency in maven projects that depend on this library
-* `target/osm-0.2.5-neo4j-4.4.14-procedures.jar` including procedures, this jar can be copied directly into a Neo4j installation's `plugins` folder
+* `target/osm-0.2.4-neo4j-4.4.14.jar` is aimed to be used as a dependency in maven projects that depend on this library
+* `target/osm-0.2.4-neo4j-4.4.14-procedures.jar` including procedures, this jar can be copied directly into a Neo4j installation's `plugins` folder
 
-We plan to make a third jar `target/osm-0.2.5-neo4j-4.4.14-all.jar` including all dependencies to faciliate running the command-line importer.
+We plan to make a third jar `target/osm-0.2.4-neo4j-4.4.14-all.jar` including all dependencies to faciliate running the command-line importer.
 But until then you need to copy and reference all dependencies as described below.
 
 ## Running
@@ -47,10 +47,10 @@ Get all dependencies together:
 
     mvn dependency:copy-dependencies
 
-To run with the jar at `target/osm-0.2.5-neo4j-4.4.14.jar`:
+To run with the jar at `target/osm-0.2.4-neo4j-4.4.14.jar`:
 
     java -Xms1280m -Xmx1280m \
-      -cp "target/osm-0.2.5-neo4j-4.4.14.jar:target/dependency/*" org.neo4j.gis.osm.OSMImportTool \
+      -cp "target/osm-0.2.4-neo4j-4.4.14.jar:target/dependency/*" org.neo4j.gis.osm.OSMImportTool \
       --skip-duplicate-nodes --delete --into target/neo4j --database map2 samples/map2.osm.bz2
 
 
@@ -124,7 +124,7 @@ To help build graphs that can be used for routing, two procedures have been adde
 * `spatial.osm.routeIntersection(node,false,false,false)`
 * `spatial.osm.routePointOfInterest(node,ways)`
 
-These can be installed into an installation of Neo4j by copying the `osm-0.2.5-neo4j-4.4.14-procedures.jar` file into the `plugins` folder, and restarting the database.
+These can be installed into an installation of Neo4j by copying the `osm-0.2.4-neo4j-4.4.14-procedures.jar` file into the `plugins` folder, and restarting the database.
 
 ### Creating a routing graph of intersections
 
