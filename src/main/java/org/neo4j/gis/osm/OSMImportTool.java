@@ -34,8 +34,12 @@ import org.neo4j.kernel.impl.transaction.log.files.TransactionLogInitializer;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.internal.Version;
 import org.neo4j.kernel.lifecycle.LifeSupport;
+import org.neo4j.logging.Level;
 import org.neo4j.logging.internal.LogService;
-import org.neo4j.logging.internal.StoreLogService;
+import org.neo4j.logging.internal.SimpleLogService;
+import org.neo4j.logging.log4j.Log4jLogProvider;
+import org.neo4j.logging.log4j.LogConfig;
+import org.neo4j.logging.log4j.Neo4jLoggerContext;
 import org.neo4j.memory.EmptyMemoryTracker;
 import org.neo4j.scheduler.JobScheduler;
 
@@ -272,22 +276,22 @@ public class OSMImportTool {
         try (FileSystemAbstraction fs = new DefaultFileSystemAbstraction()) {
             File homeDir = args.interpretOption(Options.HOME_DIR.key(), Converters.mandatory(), Converters.toFile(), DIRECTORY_IS_WRITABLE);
             homeDir.mkdirs();
-            var homeLayout = Neo4jLayout.of(homeDir);
+            var homeLayout = Neo4jLayout.of(homeDir.toPath());
             var databaseName = args.get(Options.DB_NAME.key(), "osm");
             var databaseLayout = homeLayout.databaseLayout(databaseName);
             boolean deleteDb = args.getBoolean(Options.DELETE_DB.key(), Boolean.FALSE, Boolean.TRUE);
             if (deleteDb) {
-                FileUtils.deleteRecursively(databaseLayout.databaseDirectory());
-                FileUtils.deleteRecursively(databaseLayout.getTransactionLogsDirectory());
+                FileUtils.deleteDirectory(databaseLayout.databaseDirectory());
+                FileUtils.deleteDirectory(databaseLayout.getTransactionLogsDirectory());
             }
             Config config = Config.defaults(GraphDatabaseSettings.neo4j_home, Path.of(homeDir.getAbsolutePath()));
             Path logsDir = config.get(GraphDatabaseSettings.logs_directory);
-            fs.mkdirs(logsDir.toFile());
+            fs.mkdirs(logsDir);
 
             skipBadEntriesLogging = args.getBoolean(Options.SKIP_BAD_ENTRIES_LOGGING.key(), (Boolean) Options.SKIP_BAD_ENTRIES_LOGGING.defaultValue(), false);
             if (!skipBadEntriesLogging) {
                 badFile = new File(homeDir, BAD_FILE_NAME);
-                badOutput = new BufferedOutputStream(fs.openAsOutputStream(badFile, false));
+                badOutput = new BufferedOutputStream(fs.openAsOutputStream(badFile.toPath(), false));
             }
             OSMRange range = args.interpretOption(Options.RANGE.key(), Converters.optional(), Converters.toRange(), RANGE_IS_VALID);
             osmFiles = args.orphansAsArray();
@@ -393,7 +397,8 @@ public class OSMImportTool {
 
         Config config = Config.newBuilder().fromConfig(dbConfig).set(logs_directory, Path.of(logsDir.getCanonicalPath())).build();
         Path internalLogFile = config.get(store_internal_log_path);
-        LogService logService = life.add(StoreLogService.withInternalLog(internalLogFile.toFile()).build(fs));
+        Neo4jLoggerContext ctx = LogConfig.createBuilder(fs, internalLogFile, Level.INFO).build();
+        LogService logService = life.add(new SimpleLogService(new Log4jLogProvider(ctx)));
         final JobScheduler jobScheduler = life.add(createScheduler());
 
         life.start();
@@ -404,7 +409,6 @@ public class OSMImportTool {
         var cacheTracer = tracePageCache ? new DefaultPageCacheTracer() : PageCacheTracer.NULL;
         BatchImporter importer = BatchImporterFactory.withHighestPriority().instantiate(databaseLayout,
                 fs,
-                null, // no external page cache
                 cacheTracer,
                 configuration,
                 logService,
@@ -416,6 +420,7 @@ public class OSMImportTool {
                 jobScheduler,
                 badCollector,
                 TransactionLogInitializer.getLogFilesInitializer(),
+                null,
                 EmptyMemoryTracker.INSTANCE
         );
         printOverview(databaseLayout.databaseDirectory(), osmFiles, configuration, out);
@@ -449,7 +454,7 @@ public class OSMImportTool {
             }
 
             if (!success) {
-                err.println("WARNING Import failed. The store files in " + databaseLayout.databaseDirectory().getAbsolutePath() +
+                err.println("WARNING Import failed. The store files in " + databaseLayout.databaseDirectory().toAbsolutePath() +
                         " are left as they are, although they are likely in an unusable state. " +
                         "Starting a database on these store files will likely fail or observe inconsistent records so " +
                         "start at your own risk or delete the store manually");
@@ -568,10 +573,10 @@ public class OSMImportTool {
     }
 
     private static Config loadDbConfig(File file) {
-        return file != null && file.exists() ? Config.newBuilder().fromFile(file).build() : Config.defaults();
+        return file != null && file.exists() ? Config.newBuilder().fromFile(file.toPath()).build() : Config.defaults();
     }
 
-    private static void printOverview(File storeDir, String[] osmFiles, org.neo4j.internal.batchimport.Configuration configuration, PrintStream out) {
+    private static void printOverview(Path storeDir, String[] osmFiles, org.neo4j.internal.batchimport.Configuration configuration, PrintStream out) {
         out.println("Neo4j version: " + Version.getNeo4jVersion());
         out.println("Importing the contents of these OSM files into " + storeDir + ":");
         for (String file : osmFiles) {
