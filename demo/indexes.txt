@@ -1,0 +1,39 @@
+// Amenities
+CREATE INDEX tags_amenity     IF NOT EXISTS FOR (n:OSMTags) ON (n.amenity);
+CREATE INDEX tags_building    IF NOT EXISTS FOR (n:OSMTags) ON (n.building);
+CREATE INDEX tags_capital     IF NOT EXISTS FOR (n:OSMTags) ON (n.capital);
+CREATE INDEX tags_description IF NOT EXISTS FOR (n:OSMTags) ON (n.description);
+CREATE INDEX tags_food        IF NOT EXISTS FOR (n:OSMTags) ON (n.food);
+CREATE INDEX tags_highway     IF NOT EXISTS FOR (n:OSMTags) ON (n.highway);
+CREATE INDEX tags_footway     IF NOT EXISTS FOR (n:OSMTags) ON (n.footway);
+CREATE INDEX tags_foot        IF NOT EXISTS FOR (n:OSMTags) ON (n.foot);
+CREATE INDEX tags_information IF NOT EXISTS FOR (n:OSMTags) ON (n.information);
+CREATE INDEX tags_kiosk       IF NOT EXISTS FOR (n:OSMTags) ON (n.kiosk);
+CREATE INDEX tags_office      IF NOT EXISTS FOR (n:OSMTags) ON (n.office);
+CREATE INDEX tags_place       IF NOT EXISTS FOR (n:OSMTags) ON (n.place);
+CREATE INDEX tags_restaurant  IF NOT EXISTS FOR (n:OSMTags) ON (n.restaurant);
+CREATE INDEX tags_shop        IF NOT EXISTS FOR (n:OSMTags) ON (n.shop);
+CREATE INDEX tags_station     IF NOT EXISTS FOR (n:OSMTags) ON (n.station);
+CREATE INDEX tags_type        IF NOT EXISTS FOR (n:OSMTags) ON (n.type);
+
+// Distances
+CREATE INDEX way_distance          IF NOT EXISTS FOR (n:OSMWay)      ON (n.distance);
+CREATE INDEX relation_distance     IF NOT EXISTS FOR (n:OSMRelation) ON (n.distance);
+
+// Locations
+CREATE INDEX osm_node_location     IF NOT EXISTS FOR (n:OSMNode)         ON (n.location);
+CREATE INDEX intersection_location IF NOT EXISTS FOR (n:Intersection)    ON (n.location);
+CREATE INDEX routable_location     IF NOT EXISTS FOR (n:Routable)        ON (n.location);
+CREATE INDEX poi_location          IF NOT EXISTS FOR (n:PointOfInterest) ON (n.location);
+CREATE INDEX tags_location         IF NOT EXISTS FOR (n:OSMTags)         ON (n.location);
+CREATE INDEX path_node_location    IF NOT EXISTS FOR (n:OSMPathNode)     ON (n.location);
+
+// Names
+CREATE INDEX way_name IF NOT EXISTS FOR (n:OSMWay)          ON (n.name);
+CREATE INDEX poi_name IF NOT EXISTS FOR (n:PointOfInterest) ON (n.name);
+
+// OSM ids
+CREATE INDEX relation_osm_id IF NOT EXISTS FOR (n:OSMRelation)  ON (n.relation_osm_id);
+CREATE INDEX way_osm_id      IF NOT EXISTS FOR (n:OSMWay)       ON (n.way_osm_id);
+CREATE INDEX node_osm_id     IF NOT EXISTS FOR (n:OSMNode)      ON (n.node_osm_id);
+CREATE INDEX node_osm_id     IF NOT EXISTS FOR (n:PointOfIndex) ON (n.node_osm_id);

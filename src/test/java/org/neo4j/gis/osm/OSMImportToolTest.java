@@ -28,12 +28,12 @@ import static org.neo4j.internal.helpers.collection.MapUtil.map;
 
 public class OSMImportToolTest {
 
-    private static Neo4jLayout home = Neo4jLayout.of(new File("target/import-test"));
+    private static Neo4jLayout home = Neo4jLayout.of(new File("target/import-test").toPath());
 
     @BeforeClass
     public static void ensureClean() throws IOException {
         // Previous runs leave databases that are incompatible with newer runs
-        FileUtils.deleteRecursively(home.homeDirectory());
+        FileUtils.deleteDirectory(home.homeDirectory());
     }
 
     @Test
@@ -153,10 +153,11 @@ public class OSMImportToolTest {
 
     private void importAndAssert(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions, boolean tracePageCache) throws IOException {
         File osmFile = findOSMFile(name);
+        String homePath = home.homeDirectory().toAbsolutePath().toString();
         if (tracePageCache) {
-            importAndAssert(name, osmFile.getName(), assertions, "--trace-page-cache", "--into", home.homeDirectory().getCanonicalPath(), "--database", name, osmFile.getCanonicalPath());
+            importAndAssert(name, osmFile.getName(), assertions, "--trace-page-cache", "--into", homePath, "--database", name, osmFile.getCanonicalPath());
         } else {
-            importAndAssert(name, osmFile.getName(), assertions, "--into", home.homeDirectory().getCanonicalPath(), "--database", name, osmFile.getCanonicalPath());
+            importAndAssert(name, osmFile.getName(), assertions, "--into", homePath, "--database", name, osmFile.getCanonicalPath());
         }
     }
 
@@ -165,7 +166,7 @@ public class OSMImportToolTest {
         String[] args = new String[files.length + 5];
         args[0] = "--skip-duplicate-nodes";
         args[1] = "--into";
-        args[2] = home.homeDirectory().getCanonicalPath();
+        args[2] = home.homeDirectory().toAbsolutePath().toString();
         args[3] = "--database";
         args[4] = name;
         for (int i = 0; i < files.length; i++) {
@@ -192,8 +193,8 @@ public class OSMImportToolTest {
     }
 
     private File prepareStore(String name) throws IOException {
-        var storeDir = home.databaseLayout(name).databaseDirectory();
-        FileUtils.deleteRecursively(storeDir);
+        var storeDir = home.databaseLayout(name).databaseDirectory().toFile();
+        FileUtils.deleteDirectory(storeDir.toPath());
         if (storeDir.mkdirs()) {
             System.out.println("Created store directory: " + storeDir);
         }
@@ -203,7 +204,7 @@ public class OSMImportToolTest {
     private void assertImportedCorrectly(String name, BiConsumer<GraphDatabaseService, Map<String, Long>> assertions) {
         // We are testing against community, and that cannot have multiple databases
         DatabaseManagementService databases = new TestDatabaseManagementServiceBuilder(home)
-                .setConfig(GraphDatabaseSettings.default_database, name)
+                .setConfig(GraphDatabaseSettings.initial_default_database, name)
                 .setConfig(GraphDatabaseSettings.fail_on_missing_files, false).build();
         GraphDatabaseService db = databases.database(name);
         Map<String, Long> stats = debugOSMModel(db);
