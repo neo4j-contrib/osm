@@ -409,7 +409,6 @@ public class OSMImportTool {
         var cacheTracer = tracePageCache ? new DefaultPageCacheTracer() : PageCacheTracer.NULL;
         BatchImporter importer = BatchImporterFactory.withHighestPriority().instantiate(databaseLayout,
                 fs,
-                null, // no external page cache
                 cacheTracer,
                 configuration,
                 logService,
@@ -421,6 +420,7 @@ public class OSMImportTool {
                 jobScheduler,
                 badCollector,
                 TransactionLogInitializer.getLogFilesInitializer(),
+                null,
                 EmptyMemoryTracker.INSTANCE
         );
         printOverview(databaseLayout.databaseDirectory(), osmFiles, configuration, out);
